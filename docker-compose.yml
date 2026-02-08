@@ -6,6 +6,39 @@ services:
     # 构建完成后退出，不需要持续运行
     restart: "no"
 
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    ports:
+      - "${OAUTH2_PROXY_PORT:-44180}:4180"
+    environment:
+      # OAuth2 Provider 配置 (GitHub)
+      - OAUTH2_PROXY_PROVIDER=github
+      - OAUTH2_PROXY_CLIENT_ID=${OAUTH2_PROXY_CLIENT_ID}
+      - OAUTH2_PROXY_CLIENT_SECRET=${OAUTH2_PROXY_CLIENT_SECRET}
+      # Cookie 配置
+      - OAUTH2_PROXY_COOKIE_SECRET=${OAUTH2_PROXY_COOKIE_SECRET}
+      - OAUTH2_PROXY_COOKIE_SECURE=true
+      - OAUTH2_PROXY_COOKIE_DOMAINS=${OAUTH2_PROXY_COOKIE_DOMAIN}
+      # 上游服务配置
+      - OAUTH2_PROXY_UPSTREAMS=http://api:8000/
+      - OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180
+      # 邮箱白名单 (只允许指定邮箱登录)
+      - OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE=/etc/oauth2-proxy/authenticated-emails.txt
+      # 其他配置
+      - OAUTH2_PROXY_REDIRECT_URL=https://${OAUTH2_PROXY_DOMAIN}/oauth2/callback
+      - OAUTH2_PROXY_EMAIL_DOMAINS=*
+      - OAUTH2_PROXY_PASS_USER_HEADERS=true
+      - OAUTH2_PROXY_SET_XAUTHREQUEST=true
+      - OAUTH2_PROXY_PASS_ACCESS_TOKEN=false
+      - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+    volumes:
+      - ./oauth2-proxy/authenticated-emails.txt:/etc/oauth2-proxy/authenticated-emails.txt:ro
+    networks:
+      - default
+    depends_on:
+      - api
+    restart: unless-stopped
+
   api:
     build: .
     ports:

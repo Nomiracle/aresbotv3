@@ -1,0 +1,4 @@
+# 允许登录的邮箱列表，每行一个
+# 示例：
+# admin@example.com
+# user@gmail.com
