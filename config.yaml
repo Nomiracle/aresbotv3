@@ -1,0 +1,27 @@
+# AresBot V3 Web Dashboard Configuration
+
+# Database
+database:
+  url: "mysql+aiomysql://user:pass@localhost/aresbot"
+  pool_size: 5
+  max_overflow: 10
+
+# API Server
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Security
+security:
+  # AES encryption key for API secrets (32 bytes hex)
+  # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+  encryption_key: ""
+
+# Trading defaults
+trading:
+  default_polling_interval: 1.0
+  default_price_tolerance: 0.5
+
+# Logging
+logging:
+  level: "INFO"

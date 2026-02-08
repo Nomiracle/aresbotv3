@@ -1,0 +1,197 @@
+"""Strategy execution Celery task."""
+import socket
+import time
+from typing import Any, Dict
+
+from celery import Task
+from celery.exceptions import Reject
+
+from celery_app import app
+from AresBotv3.config import ExchangeConfig, TradingConfig
+from AresBotv3.core.redis_client import get_redis_client
+from AresBotv3.core.state_store import StateStore
+from AresBotv3.domain.risk_manager import RiskManager, RiskConfig
+from AresBotv3.engine.trading_engine import TradingEngine
+from AresBotv3.exchanges.binance_spot import BinanceSpot
+from AresBotv3.strategies.grid_strategy import GridStrategy
+from AresBotv3.utils.crypto import decrypt_api_secret
+from AresBotv3.utils.logger import get_logger
+
+
+logger = get_logger("celery.task")
+
+
+def get_worker_ip() -> str:
+    """Get the IP address of the current worker."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return socket.gethostbyname(socket.gethostname())
+
+
+class StrategyTask(Task):
+    """Custom Celery task for strategy execution."""
+
+    name = "tasks.strategy_task.run_strategy"
+    bind = True
+    max_retries = 0  # No retries for long-running tasks
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        """Handle task failure."""
+        strategy_id = kwargs.get("strategy_id") or (args[0] if args else None)
+        if strategy_id:
+            redis_client = get_redis_client()
+            redis_client.update_running_status(
+                strategy_id=strategy_id,
+                status="error",
+                last_error=str(exc),
+            )
+            redis_client.release_lock(strategy_id)
+            redis_client.clear_running_info(strategy_id)
+        logger.error(f"Strategy task {task_id} failed: {exc}")
+
+
+@app.task(base=StrategyTask, bind=True)
+def run_strategy(
+    self,
+    strategy_id: int,
+    account_data: Dict[str, Any],
+    strategy_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Run a trading strategy as a Celery task.
+
+    Args:
+        strategy_id: Database ID of the strategy
+        account_data: Exchange account credentials and settings
+        strategy_config: Strategy configuration parameters
+
+    Returns:
+        Task result with execution statistics
+    """
+    task_id = self.request.id
+    worker_ip = get_worker_ip()
+    worker_hostname = socket.gethostname()
+
+    redis_client = get_redis_client()
+
+    # 1. Try to acquire distributed lock
+    if not redis_client.acquire_lock(strategy_id, task_id):
+        existing_task = redis_client.get_lock_holder(strategy_id)
+        raise Reject(
+            f"Strategy {strategy_id} already running (task_id: {existing_task})",
+            requeue=False,
+        )
+
+    # 2. Save running instance info to Redis
+    redis_client.set_running_info(
+        strategy_id=strategy_id,
+        task_id=task_id,
+        worker_ip=worker_ip,
+        worker_hostname=worker_hostname,
+        status="running",
+    )
+
+    logger.info(
+        f"Starting strategy {strategy_id} on worker {worker_hostname} ({worker_ip}), "
+        f"task_id={task_id}"
+    )
+
+    try:
+        # 3. Build and run the trading engine
+        engine = _create_engine(strategy_id, account_data, strategy_config, redis_client)
+        engine.start()
+
+        return {
+            "strategy_id": strategy_id,
+            "task_id": task_id,
+            "worker_ip": worker_ip,
+            "status": "stopped",
+        }
+
+    except Exception as e:
+        logger.error(f"Strategy {strategy_id} error: {e}")
+        redis_client.update_running_status(
+            strategy_id=strategy_id,
+            status="error",
+            last_error=str(e),
+        )
+        raise
+
+    finally:
+        # 4. Cleanup
+        redis_client.release_lock(strategy_id)
+        redis_client.clear_running_info(strategy_id)
+        logger.info(f"Strategy {strategy_id} stopped and cleaned up")
+
+
+def _create_engine(
+    strategy_id: int,
+    account_data: Dict[str, Any],
+    strategy_config: Dict[str, Any],
+    redis_client,
+) -> TradingEngine:
+    """Create a trading engine instance."""
+    # Decrypt API credentials
+    api_key = decrypt_api_secret(account_data["api_key"])
+    api_secret = decrypt_api_secret(account_data["api_secret"])
+
+    # Build exchange config
+    exchange_config = ExchangeConfig(
+        api_key=api_key,
+        api_secret=api_secret,
+        symbol=strategy_config["symbol"],
+        testnet=account_data.get("testnet", False),
+    )
+
+    # Build trading config
+    trading_config = TradingConfig(
+        symbol=strategy_config["symbol"],
+        quantity=float(strategy_config["base_order_size"]),
+        offset_percent=float(strategy_config["buy_price_deviation"]),
+        sell_offset_percent=float(strategy_config["sell_price_deviation"]),
+        order_grid=strategy_config["grid_levels"],
+        interval=float(strategy_config["polling_interval"]),
+        reprice_threshold=float(strategy_config["price_tolerance"]),
+    )
+
+    # Build risk settings
+    risk_config = RiskConfig(
+        stop_loss_percent=float(strategy_config["stop_loss"]) if strategy_config.get("stop_loss") else None,
+        stop_loss_delay_seconds=strategy_config.get("stop_loss_delay"),
+        max_position_count=strategy_config["max_open_positions"],
+        max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
+    )
+
+    # Create instances
+    exchange = BinanceSpot(exchange_config)
+    grid_strategy = GridStrategy(trading_config)
+    risk_manager = RiskManager(risk_config)
+    state_store = StateStore(f"trades_{strategy_id}.db")
+
+    # Build engine
+    engine = TradingEngine(
+        strategy=grid_strategy,
+        exchange=exchange,
+        risk_manager=risk_manager,
+        state_store=state_store,
+        sync_interval=60,
+    )
+
+    # Set up status update callback
+    def on_status_update(status: Dict[str, Any]) -> None:
+        redis_client.update_running_status(
+            strategy_id=strategy_id,
+            current_price=status.get("current_price"),
+            pending_buys=status.get("pending_buys"),
+            pending_sells=status.get("pending_sells"),
+            position_count=status.get("position_count"),
+        )
+
+    engine.on_status_update = on_status_update
+
+    return engine

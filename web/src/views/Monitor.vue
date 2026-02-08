@@ -1,0 +1,101 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import type { Strategy, StrategyStatus } from '@/types'
+import { strategyApi } from '@/api/strategy'
+import MonitorCard from '@/components/MonitorCard.vue'
+
+const strategies = ref<Strategy[]>([])
+const statusMap = ref<Map<number, StrategyStatus>>(new Map())
+const loading = ref(false)
+let pollTimer: number | null = null
+
+async function fetchStrategies() {
+  loading.value = true
+  try {
+    strategies.value = await strategyApi.getAll()
+  } finally {
+    loading.value = false
+  }
+}
+
+async function fetchStatus(id: number) {
+  try {
+    const status = await strategyApi.getStatus(id)
+    statusMap.value.set(id, status)
+  } catch {
+    // 忽略单个策略状态获取错误
+  }
+}
+
+async function fetchAllStatus() {
+  await Promise.all(strategies.value.map(s => fetchStatus(s.id)))
+}
+
+function startPolling() {
+  pollTimer = window.setInterval(() => {
+    fetchAllStatus()
+  }, 1000)
+}
+
+function stopPolling() {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+async function handleStart(id: number) {
+  try {
+    await strategyApi.start(id)
+    ElMessage.success('策略已启动')
+    fetchStatus(id)
+  } catch {
+    // 错误已在拦截器处理
+  }
+}
+
+async function handleStop(id: number) {
+  try {
+    await strategyApi.stop(id)
+    ElMessage.success('策略已停止')
+    fetchStatus(id)
+  } catch {
+    // 错误已在拦截器处理
+  }
+}
+
+function getStatus(id: number): StrategyStatus | null {
+  return statusMap.value.get(id) || null
+}
+
+onMounted(async () => {
+  await fetchStrategies()
+  await fetchAllStatus()
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
+})
+</script>
+
+<template>
+  <div>
+    <div class="page-header">
+      <h2>实时监控</h2>
+    </div>
+
+    <div v-loading="loading">
+      <MonitorCard
+        v-for="strategy in strategies"
+        :key="strategy.id"
+        :strategy="strategy"
+        :status="getStatus(strategy.id)"
+        @start="handleStart"
+        @stop="handleStop"
+      />
+      <el-empty v-if="strategies.length === 0" description="暂无策略" />
+    </div>
+  </div>
+</template>
