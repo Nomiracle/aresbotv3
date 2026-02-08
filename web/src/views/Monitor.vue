@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Strategy, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
@@ -9,6 +9,11 @@ const strategies = ref<Strategy[]>([])
 const statusMap = ref<Map<number, StrategyStatus>>(new Map())
 const loading = ref(false)
 let pollTimer: number | null = null
+
+// 只显示正在运行的策略
+const runningStrategies = computed(() => {
+  return strategies.value.filter(s => statusMap.value.has(s.id))
+})
 
 async function fetchStrategies() {
   loading.value = true
@@ -63,7 +68,8 @@ async function handleStop(id: number) {
   try {
     await strategyApi.stop(id)
     ElMessage.success('策略已停止')
-    fetchStatus(id)
+    // 立即从 map 中删除
+    statusMap.value.delete(id)
   } catch {
     // 错误已在拦截器处理
   }
@@ -92,14 +98,14 @@ onUnmounted(() => {
 
     <div v-loading="loading">
       <MonitorCard
-        v-for="strategy in strategies"
+        v-for="strategy in runningStrategies"
         :key="strategy.id"
         :strategy="strategy"
         :status="getStatus(strategy.id)"
         @start="handleStart"
         @stop="handleStop"
       />
-      <el-empty v-if="strategies.length === 0" description="暂无策略" />
+      <el-empty v-if="runningStrategies.length === 0" description="暂无运行中的策略" />
     </div>
   </div>
 </template>
