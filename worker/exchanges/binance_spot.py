@@ -134,6 +134,17 @@ class BinanceSpot(BaseExchange):
             return f"{raw_symbol[:-4]}/USDT"
         return raw_symbol
 
+    @staticmethod
+    def _mask_credential(value: str, keep_prefix: int = 4, keep_suffix: int = 4) -> str:
+        raw_value = str(value or "")
+        if not raw_value:
+            return ""
+
+        if len(raw_value) <= keep_prefix + keep_suffix:
+            return raw_value
+
+        return f"{raw_value[:keep_prefix]}***{raw_value[-keep_suffix:]}"
+
     @classmethod
     def _make_shared_key(
         cls,
@@ -188,6 +199,9 @@ class BinanceSpot(BaseExchange):
             context = cls._shared_contexts.get(key)
             if context is not None:
                 return context
+
+            secret_preview = cls._mask_credential(api_secret, keep_prefix=4, keep_suffix=4)
+            logger.info("%s creating exchange testnet=%s api_secret=%s", log_prefix, testnet, secret_preview)
 
             exchange = cls._create_exchange(
                 api_key=api_key,
