@@ -1,5 +1,5 @@
 # Web API
-fastapi>=0.109.0
+fastapi==0.115.5
 uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
@@ -11,10 +11,10 @@ pymysql>=1.1.0
 sqlalchemy[asyncio]>=2.0.0
 
 # Security
-cryptography>=41.0.0
+cryptography==44.0.0
 
 # Trading
-ccxt>=4.2.0
+ccxt==4.5.34
 
 # Utils
 python-dotenv>=1.0.0
