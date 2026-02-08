@@ -1,4 +1,5 @@
 """Strategy execution Celery task."""
+from dataclasses import dataclass
 import signal
 import socket
 import time
@@ -23,6 +24,19 @@ from worker.strategies.grid_strategy import GridStrategy
 
 
 logger = get_logger("celery.task")
+
+
+@dataclass(frozen=True)
+class TaskRuntime:
+    strategy_id: int
+    task_id: str
+    worker_ip: str
+    worker_hostname: str
+
+
+def _cleanup_runtime(redis_client, strategy_id: int) -> None:
+    redis_client.release_lock(strategy_id)
+    redis_client.clear_running_info(strategy_id)
 
 
 def get_worker_ip() -> str:
@@ -73,8 +87,7 @@ class StrategyTask(Task):
                 status="error",
                 last_error=str(exc),
             )
-            redis_client.release_lock(strategy_id)
-            redis_client.clear_running_info(strategy_id)
+            _cleanup_runtime(redis_client, strategy_id)
         logger.error(f"Strategy task {task_id} failed: {exc}")
 
 
@@ -97,15 +110,18 @@ def run_strategy(
     Returns:
         Task result with execution statistics
     """
-    task_id = self.request.id
-    worker_ip = get_worker_ip()
-    worker_hostname = socket.gethostname()
+    runtime = TaskRuntime(
+        strategy_id=strategy_id,
+        task_id=self.request.id,
+        worker_ip=get_worker_ip(),
+        worker_hostname=socket.gethostname(),
+    )
     previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
 
     redis_client = get_redis_client()
 
     # 1. Try to acquire distributed lock
-    if not redis_client.acquire_lock(strategy_id, task_id):
+    if not redis_client.acquire_lock(runtime.strategy_id, runtime.task_id):
         existing_task = redis_client.get_lock_holder(strategy_id)
 
         # stale lock cleanup: lock holder task no longer exists in cluster
@@ -115,7 +131,7 @@ def run_strategy(
             )
             redis_client.release_lock(strategy_id)
 
-            if redis_client.acquire_lock(strategy_id, task_id):
+            if redis_client.acquire_lock(runtime.strategy_id, runtime.task_id):
                 logger.info(f"Strategy {strategy_id} acquired lock after stale cleanup")
             else:
                 current_holder = redis_client.get_lock_holder(strategy_id)
@@ -123,8 +139,8 @@ def run_strategy(
                     f"Skip duplicate start for strategy {strategy_id}, lock holder={current_holder}"
                 )
                 return {
-                    "strategy_id": strategy_id,
-                    "task_id": task_id,
+                    "strategy_id": runtime.strategy_id,
+                    "task_id": runtime.task_id,
                     "status": "skipped_already_running",
                     "existing_task_id": current_holder,
                 }
@@ -133,8 +149,8 @@ def run_strategy(
                 f"Skip duplicate start for strategy {strategy_id}, lock holder={existing_task}"
             )
             return {
-                "strategy_id": strategy_id,
-                "task_id": task_id,
+                "strategy_id": runtime.strategy_id,
+                "task_id": runtime.task_id,
                 "status": "skipped_already_running",
                 "existing_task_id": existing_task,
             }
@@ -143,10 +159,10 @@ def run_strategy(
     runtime_data = strategy_runtime or {}
 
     redis_client.set_running_info(
-        strategy_id=strategy_id,
-        task_id=task_id,
-        worker_ip=worker_ip,
-        worker_hostname=worker_hostname,
+        strategy_id=runtime.strategy_id,
+        task_id=runtime.task_id,
+        worker_ip=runtime.worker_ip,
+        worker_hostname=runtime.worker_hostname,
         status="running",
         user_email=runtime_data.get("user_email"),
         strategy_snapshot=runtime_data.get("strategy_snapshot", {}),
@@ -154,8 +170,8 @@ def run_strategy(
     )
 
     logger.info(
-        f"Starting strategy {strategy_id} on worker {worker_hostname} ({worker_ip}), "
-        f"task_id={task_id}"
+        f"Starting strategy {runtime.strategy_id} on worker {runtime.worker_hostname} ({runtime.worker_ip}), "
+        f"task_id={runtime.task_id}"
     )
 
     try:
@@ -175,9 +191,9 @@ def run_strategy(
         signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
         return {
-            "strategy_id": strategy_id,
-            "task_id": task_id,
-            "worker_ip": worker_ip,
+            "strategy_id": runtime.strategy_id,
+            "task_id": runtime.task_id,
+            "worker_ip": runtime.worker_ip,
             "status": "stopped",
         }
 
@@ -197,8 +213,7 @@ def run_strategy(
             pass
 
         # 4. Cleanup
-        redis_client.release_lock(strategy_id)
-        redis_client.clear_running_info(strategy_id)
+        _cleanup_runtime(redis_client, strategy_id)
         logger.info(f"Strategy {strategy_id} stopped and cleaned up")
 
 
