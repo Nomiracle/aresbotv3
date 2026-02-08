@@ -5,7 +5,7 @@ import threading
 from typing import Dict, List, Optional
 import ccxt.pro as ccxtpro
 
-from core.base_exchange import (
+from worker.base_exchange import (
     BaseExchange, OrderResult, OrderStatus, ExchangeOrder, TradingRules
 )
 

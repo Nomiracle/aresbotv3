@@ -3,15 +3,15 @@ import asyncio
 import concurrent.futures
 from typing import Dict, Optional
 
-from config import ExchangeConfig, TradingConfig, RiskSettings
-from core.state_store import StateStore
-from db.models import ExchangeAccount, Strategy
-from domain.risk_manager import RiskManager, RiskConfig
-from engine.trading_engine import TradingEngine
-from exchanges.binance_spot import BinanceSpot
-from strategies.grid_strategy import GridStrategy
-from utils.crypto import decrypt_api_secret
-from utils.logger import get_logger
+from shared.config import ExchangeConfig, TradingConfig, RiskSettings
+from shared.db.models import ExchangeAccount, Strategy
+from shared.utils.crypto import decrypt_api_secret
+from shared.utils.logger import get_logger
+from worker.state_store import StateStore
+from worker.domain.risk_manager import RiskManager, RiskConfig
+from worker.engine.trading_engine import TradingEngine
+from worker.exchanges.binance_spot import BinanceSpot
+from worker.strategies.grid_strategy import GridStrategy
 
 
 class EngineManager:

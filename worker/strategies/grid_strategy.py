@@ -1,6 +1,6 @@
 from typing import Optional
 
-from core import BaseStrategy, StrategyConfig, TradeDecision, Signal
+from worker import BaseStrategy, StrategyConfig, TradeDecision, Signal
 
 
 class GridStrategy(BaseStrategy):

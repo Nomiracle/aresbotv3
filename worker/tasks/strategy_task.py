@@ -13,13 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from worker.celery_app import app
 from shared.config import ExchangeConfig, TradingConfig
 from shared.core.redis_client import get_redis_client
-from shared.core.state_store import StateStore
-from shared.domain.risk_manager import RiskManager, RiskConfig
-from shared.engine.trading_engine import TradingEngine
-from shared.exchanges.binance_spot import BinanceSpot
-from shared.strategies.grid_strategy import GridStrategy
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
+from worker.state_store import StateStore
+from worker.domain.risk_manager import RiskManager, RiskConfig
+from worker.engine.trading_engine import TradingEngine
+from worker.exchanges.binance_spot import BinanceSpot
+from worker.strategies.grid_strategy import GridStrategy
 
 
 logger = get_logger("celery.task")
