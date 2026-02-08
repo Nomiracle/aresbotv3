@@ -77,11 +77,17 @@ class TradingEngine:
 
     def _run_loop(self) -> None:
         """主循环"""
+        loop_index = 0
         while self._running:
+            loop_index += 1
+            loop_started_at = time.time()
             try:
+                logger.debug("主循环开始 #%s symbol=%s", loop_index, self.strategy.config.symbol)
                 self._fetch_price()
 
                 if self._current_price is None:
+                    logger.debug("主循环等待价格 #%s", loop_index)
+                    self._update_status(force=True, source="loop_no_price")
                     time.sleep(0.1)
                     continue
 
@@ -90,13 +96,32 @@ class TradingEngine:
                 self._check_reprice()
                 self._check_stop_loss()
                 self._periodic_sync()
-                self._update_status()
+
+                # 每轮主循环结束后强制刷新一次状态（Redis）
+                self._update_status(force=True, source="loop_complete")
+
+                with self._lock:
+                    pending_buys = len(self._pending_buys)
+                    pending_sells = len(self._pending_sells)
+                logger.debug(
+                    "主循环完成 #%s price=%s buys=%s sells=%s positions=%s cost=%.3fs",
+                    loop_index,
+                    self._current_price,
+                    pending_buys,
+                    pending_sells,
+                    self.position_tracker.get_position_count(),
+                    time.time() - loop_started_at,
+                )
 
                 time.sleep(self.strategy.config.interval)
 
             except Exception as e:
-                logger.error(f"主循环异常: {e}")
+                logger.exception("主循环异常 #%s: %s", loop_index, e)
+                self._update_status(force=True, source="loop_exception")
                 time.sleep(1)
+
+        logger.info("主循环已退出 symbol=%s", self.strategy.config.symbol)
+        self._update_status(force=True, source="loop_exit")
 
     def _fetch_price(self) -> None:
         """获取当前价格"""
@@ -172,6 +197,7 @@ class TradingEngine:
             self.position_tracker.get_position_count()
         )
         if not can_open:
+            logger.debug("跳过新开仓: %s", reason)
             return
 
         decision = self.strategy.should_buy(
@@ -181,13 +207,35 @@ class TradingEngine:
         )
 
         if decision:
+            logger.debug(
+                "生成买单决策 price=%s qty=%s grid=%s",
+                decision.price,
+                decision.quantity,
+                decision.grid_index,
+            )
             self._place_buy_order(decision.price, decision.quantity, decision.grid_index)
+        else:
+            logger.debug(
+                "无新买单决策 active_buys=%s active_sells=%s price=%s",
+                active_buys,
+                active_sells,
+                self._current_price,
+            )
 
     def _place_buy_order(self, price: float, quantity: float, grid_index: int) -> None:
         """下买单"""
         rules = self.exchange.get_trading_rules()
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(quantity, rules)
+
+        logger.debug(
+            "准备下买单 raw_price=%s raw_qty=%s aligned_price=%s aligned_qty=%s grid=%s",
+            price,
+            quantity,
+            aligned_price,
+            aligned_qty,
+            grid_index,
+        )
 
         results = self.exchange.place_batch_orders([{
             'side': 'buy',
@@ -209,6 +257,8 @@ class TradingEngine:
             with self._lock:
                 self._pending_buys[result.order_id] = order
             logger.info(f"买单已下: {result.order_id}, 价格={aligned_price}, 数量={aligned_qty}")
+        else:
+            logger.debug("买单下单失败 aligned_price=%s aligned_qty=%s", aligned_price, aligned_qty)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> None:
         """下卖单"""
@@ -217,6 +267,14 @@ class TradingEngine:
         sell_qty = buy_order.filled_quantity * (1 - fee_rate)
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(sell_qty, rules)
+
+        logger.debug(
+            "准备下卖单 buy_order=%s raw_price=%s aligned_price=%s aligned_qty=%s",
+            buy_order.order_id,
+            price,
+            aligned_price,
+            aligned_qty,
+        )
 
         results = self.exchange.place_batch_orders([{
             'side': 'sell',
@@ -239,6 +297,8 @@ class TradingEngine:
             with self._lock:
                 self._pending_sells[result.order_id] = order
             logger.info(f"卖单已下: {result.order_id}, 价格={aligned_price}, 数量={aligned_qty}")
+        else:
+            logger.debug("卖单下单失败 buy_order=%s aligned_price=%s", buy_order.order_id, aligned_price)
 
     def _on_order_filled(self, event: Event) -> None:
         """订单完全成交处理"""
@@ -417,6 +477,8 @@ class TradingEngine:
         if not to_cancel:
             return
 
+        logger.debug("触发改价 cancel_count=%s", len(to_cancel))
+
         # 批量取消
         self.exchange.cancel_batch_orders(to_cancel)
 
@@ -508,15 +570,16 @@ class TradingEngine:
         with self._lock:
             pending_sells_copy = dict(self._pending_sells)
 
+        logger.debug("触发定期同步 pending_sells=%s", len(pending_sells_copy))
         self.position_syncer.sync(pending_sells_copy)
 
-    def _update_status(self) -> None:
+    def _update_status(self, force: bool = False, source: str = "periodic") -> None:
         """更新状态到外部（用于分布式部署）"""
         if self.on_status_update is None:
             return
 
         now = time.time()
-        if now - self._last_status_update_time < self._status_update_interval:
+        if not force and now - self._last_status_update_time < self._status_update_interval:
             return
 
         self._last_status_update_time = now
@@ -531,6 +594,15 @@ class TradingEngine:
 
         try:
             self.on_status_update(status)
+            logger.debug(
+                "状态已更新 source=%s force=%s price=%s buys=%s sells=%s positions=%s",
+                source,
+                force,
+                status["current_price"],
+                status["pending_buys"],
+                status["pending_sells"],
+                status["position_count"],
+            )
         except Exception as e:
             logger.warning(f"状态更新回调失败: {e}")
 

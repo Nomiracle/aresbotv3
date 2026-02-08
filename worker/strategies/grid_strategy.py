@@ -1,6 +1,10 @@
 from typing import Optional
+import logging
 
 from worker import BaseStrategy, StrategyConfig, TradeDecision, Signal
+
+
+logger = logging.getLogger(__name__)
 
 
 class GridStrategy(BaseStrategy):
@@ -24,10 +28,24 @@ class GridStrategy(BaseStrategy):
         total_orders = active_buy_orders + active_sell_orders
 
         if total_orders >= self.config.order_grid:
+            logger.debug(
+                "GridStrategy skip buy total_orders=%s grid=%s price=%s",
+                total_orders,
+                self.config.order_grid,
+                current_price,
+            )
             return None
 
         grid_index = total_orders + 1
         buy_price = self.calculate_buy_price(current_price, grid_index)
+
+        logger.debug(
+            "GridStrategy buy decision grid=%s current_price=%s buy_price=%s qty=%s",
+            grid_index,
+            current_price,
+            buy_price,
+            self.config.quantity,
+        )
 
         return TradeDecision(
             signal=Signal.BUY,
@@ -65,7 +83,22 @@ class GridStrategy(BaseStrategy):
             diff_pct = abs(order_price - target_price) / target_price * 100
 
             if diff_pct > self.reprice_threshold:
+                logger.debug(
+                    "GridStrategy reprice buy old=%s target=%s diff_pct=%.4f threshold=%.4f",
+                    order_price,
+                    target_price,
+                    diff_pct,
+                    self.reprice_threshold,
+                )
                 return target_price
+
+            logger.debug(
+                "GridStrategy keep buy old=%s target=%s diff_pct=%.4f threshold=%.4f",
+                order_price,
+                target_price,
+                diff_pct,
+                self.reprice_threshold,
+            )
 
         return None
 
