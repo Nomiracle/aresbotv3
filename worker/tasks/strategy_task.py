@@ -186,7 +186,12 @@ def run_strategy(
 
     try:
         # 3. Build and run the trading engine
-        engine = _create_engine(strategy_id, account_data, strategy_config, redis_client)
+        engine = _create_engine(
+            strategy_id=runtime.strategy_id,
+            account_data=account_data,
+            strategy_config=strategy_config,
+            redis_client=redis_client,
+        )
 
         def _handle_sigterm(signum, frame):
             logger.info(f"Strategy {strategy_id} received SIGTERM, stopping engine")
@@ -252,7 +257,7 @@ def _create_engine(
     # Build risk settings
     risk_config = RiskConfig(
         stop_loss_percent=float(strategy_config["stop_loss"]) if strategy_config.get("stop_loss") else None,
-        stop_loss_delay_seconds=strategy_config.get("stop_loss_delay"),
+        stop_loss_delay_seconds=int(strategy_config["stop_loss_delay"]) if strategy_config.get("stop_loss_delay") else None,
         max_position_count=strategy_config["max_open_positions"],
         max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
     )
