@@ -1,7 +1,8 @@
 """Redis client for strategy runtime state management."""
+import json
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import redis
 
@@ -68,15 +69,35 @@ class RedisClient:
         worker_ip: str,
         worker_hostname: str,
         status: str = "running",
+        user_email: Optional[str] = None,
+        strategy_snapshot: Optional[Dict[str, Any]] = None,
+        runtime_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Set the running information for a strategy."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
         now = int(time.time())
+        snapshot = strategy_snapshot or {}
+
         self._client.hset(key, mapping={
             "task_id": task_id,
             "worker_ip": worker_ip,
             "worker_hostname": worker_hostname,
             "status": status,
+            "user_email": user_email or "",
+            "strategy_name": str(snapshot.get("strategy_name") or ""),
+            "symbol": str(snapshot.get("symbol") or ""),
+            "base_order_size": str(snapshot.get("base_order_size") or ""),
+            "buy_price_deviation": str(snapshot.get("buy_price_deviation") or ""),
+            "sell_price_deviation": str(snapshot.get("sell_price_deviation") or ""),
+            "grid_levels": str(snapshot.get("grid_levels") or "0"),
+            "polling_interval": str(snapshot.get("polling_interval") or ""),
+            "price_tolerance": str(snapshot.get("price_tolerance") or ""),
+            "stop_loss": str(snapshot.get("stop_loss") or ""),
+            "stop_loss_delay": str(snapshot.get("stop_loss_delay") or ""),
+            "max_open_positions": str(snapshot.get("max_open_positions") or "0"),
+            "max_daily_drawdown": str(snapshot.get("max_daily_drawdown") or ""),
+            "worker_name": str(snapshot.get("worker_name") or ""),
+            "runtime_config": json.dumps(runtime_config or {}, ensure_ascii=False),
             "started_at": now,
             "current_price": 0,
             "pending_buys": 0,
@@ -115,6 +136,14 @@ class RedisClient:
 
         self._client.hset(key, mapping=update_data)
 
+    def update_runtime_config(self, strategy_id: int, runtime_config: Dict[str, Any]) -> None:
+        """Update runtime strategy config in Redis for hot-reload style workflows."""
+        key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
+        self._client.hset(key, mapping={
+            "runtime_config": json.dumps(runtime_config, ensure_ascii=False),
+            "updated_at": int(time.time()),
+        })
+
     def get_running_info(self, strategy_id: int) -> Optional[Dict]:
         """Get the running information for a strategy."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
@@ -122,11 +151,34 @@ class RedisClient:
         if not info:
             return None
 
+        stop_loss_delay = info.get("stop_loss_delay", "")
+        max_open_positions = info.get("max_open_positions", "0")
+
+        try:
+            runtime_config = json.loads(info.get("runtime_config", "{}") or "{}")
+        except json.JSONDecodeError:
+            runtime_config = {}
+
         return {
             "task_id": info.get("task_id", ""),
             "worker_ip": info.get("worker_ip", ""),
             "worker_hostname": info.get("worker_hostname", ""),
             "status": info.get("status", ""),
+            "user_email": info.get("user_email", ""),
+            "strategy_name": info.get("strategy_name", ""),
+            "symbol": info.get("symbol", ""),
+            "base_order_size": info.get("base_order_size", ""),
+            "buy_price_deviation": info.get("buy_price_deviation", ""),
+            "sell_price_deviation": info.get("sell_price_deviation", ""),
+            "grid_levels": int(info.get("grid_levels", 0) or 0),
+            "polling_interval": info.get("polling_interval", ""),
+            "price_tolerance": info.get("price_tolerance", ""),
+            "stop_loss": info.get("stop_loss") or None,
+            "stop_loss_delay": int(stop_loss_delay) if stop_loss_delay else None,
+            "max_open_positions": int(max_open_positions or 0),
+            "max_daily_drawdown": info.get("max_daily_drawdown") or None,
+            "worker_name": info.get("worker_name") or None,
+            "runtime_config": runtime_config,
             "started_at": int(info.get("started_at", 0)),
             "current_price": float(info.get("current_price", 0)),
             "pending_buys": int(info.get("pending_buys", 0)),
@@ -141,7 +193,7 @@ class RedisClient:
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
         self._client.delete(key)
 
-    def get_all_running_strategies(self) -> List[Dict]:
+    def get_all_running_strategies(self, user_email: Optional[str] = None) -> List[Dict]:
         """Get all running strategies with their information."""
         keys = self._client.keys(f"{self.RUNNING_KEY_PREFIX}*")
         result = []
@@ -149,6 +201,8 @@ class RedisClient:
             strategy_id = int(key.split(":")[-1])
             info = self.get_running_info(strategy_id)
             if info:
+                if user_email and info.get("user_email") != user_email:
+                    continue
                 info["strategy_id"] = strategy_id
                 result.append(info)
         return result

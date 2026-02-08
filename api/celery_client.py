@@ -58,6 +58,7 @@ def send_run_strategy(
     strategy_id: int,
     account_data: dict,
     strategy_config: dict,
+    strategy_runtime: Optional[dict] = None,
     worker_name: Optional[str] = None,
 ) -> str:
     """Send run_strategy task to worker, return task_id.
@@ -81,6 +82,7 @@ def send_run_strategy(
             'strategy_id': strategy_id,
             'account_data': account_data,
             'strategy_config': strategy_config,
+            'strategy_runtime': strategy_runtime or {},
         },
         **options,
     )

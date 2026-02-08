@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Monitor } from '@element-plus/icons-vue'
-import type { Strategy, StrategyStatus } from '@/types'
+import type { StrategyStatus } from '@/types'
+
+interface MonitorCardStrategy {
+  id: number
+  name: string
+  symbol: string
+  max_open_positions: number
+}
 
 const props = defineProps<{
-  strategy: Strategy
+  strategy: MonitorCardStrategy
   status: StrategyStatus | null
 }>()
 

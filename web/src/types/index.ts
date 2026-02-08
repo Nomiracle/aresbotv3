@@ -75,6 +75,33 @@ export interface StrategyStatus {
   error_count?: number
 }
 
+export interface RunningStrategy {
+  strategy_id: number
+  task_id: string
+  strategy_name: string
+  symbol: string
+  base_order_size: string
+  buy_price_deviation: string
+  sell_price_deviation: string
+  grid_levels: number
+  polling_interval: string
+  price_tolerance: string
+  stop_loss?: string | null
+  stop_loss_delay?: number | null
+  max_open_positions: number
+  max_daily_drawdown?: string | null
+  worker_name?: string | null
+  worker_ip: string
+  worker_hostname: string
+  status: string
+  current_price: number
+  pending_buys: number
+  pending_sells: number
+  position_count: number
+  started_at: number
+  updated_at: number
+}
+
 export interface Trade {
   id: number
   strategy_id: number

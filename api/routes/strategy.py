@@ -87,6 +87,19 @@ class StrategyStatusResponse(BaseModel):
 class RunningStrategyResponse(BaseModel):
     strategy_id: int
     task_id: str
+    strategy_name: str
+    symbol: str
+    base_order_size: str
+    buy_price_deviation: str
+    sell_price_deviation: str
+    grid_levels: int
+    polling_interval: str
+    price_tolerance: str
+    stop_loss: Optional[str] = None
+    stop_loss_delay: Optional[int] = None
+    max_open_positions: int
+    max_daily_drawdown: Optional[str] = None
+    worker_name: Optional[str] = None
     worker_ip: str
     worker_hostname: str
     status: str
@@ -185,11 +198,24 @@ async def get_running_strategies(
 ):
     """Get all running strategies from Redis."""
     redis_client = get_redis_client()
-    running = redis_client.get_all_running_strategies()
+    running = redis_client.get_all_running_strategies(user_email=user_email)
     return [
         RunningStrategyResponse(
             strategy_id=info["strategy_id"],
             task_id=info["task_id"],
+            strategy_name=info.get("strategy_name", ""),
+            symbol=info.get("symbol", ""),
+            base_order_size=info.get("base_order_size", ""),
+            buy_price_deviation=info.get("buy_price_deviation", ""),
+            sell_price_deviation=info.get("sell_price_deviation", ""),
+            grid_levels=info.get("grid_levels", 0),
+            polling_interval=info.get("polling_interval", ""),
+            price_tolerance=info.get("price_tolerance", ""),
+            stop_loss=info.get("stop_loss"),
+            stop_loss_delay=info.get("stop_loss_delay"),
+            max_open_positions=info.get("max_open_positions", 0),
+            max_daily_drawdown=info.get("max_daily_drawdown"),
+            worker_name=info.get("worker_name"),
             worker_ip=info["worker_ip"],
             worker_hostname=info["worker_hostname"],
             status=info["status"],
@@ -309,10 +335,31 @@ async def start_strategy(
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
     _ensure_worker_available(worker_name)
 
+    strategy_runtime = {
+        "user_email": user_email,
+        "strategy_snapshot": {
+            "strategy_name": strategy.name,
+            "symbol": strategy.symbol,
+            "base_order_size": str(strategy.base_order_size),
+            "buy_price_deviation": str(strategy.buy_price_deviation),
+            "sell_price_deviation": str(strategy.sell_price_deviation),
+            "grid_levels": strategy.grid_levels,
+            "polling_interval": str(strategy.polling_interval),
+            "price_tolerance": str(strategy.price_tolerance),
+            "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
+            "stop_loss_delay": strategy.stop_loss_delay,
+            "max_open_positions": strategy.max_open_positions,
+            "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+            "worker_name": worker_name,
+        },
+        "runtime_config": strategy_config,
+    }
+
     task_id = send_run_strategy(
         strategy_id=strategy_id,
         account_data=account_data,
         strategy_config=strategy_config,
+        strategy_runtime=strategy_runtime,
         worker_name=worker_name,
     )
 
@@ -429,7 +476,32 @@ async def batch_start_strategies(
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             }
             _ensure_worker_available(strategy.worker_name)
-            send_run_strategy(sid, account_data, strategy_config, strategy.worker_name)
+            strategy_runtime = {
+                "user_email": user_email,
+                "strategy_snapshot": {
+                    "strategy_name": strategy.name,
+                    "symbol": strategy.symbol,
+                    "base_order_size": str(strategy.base_order_size),
+                    "buy_price_deviation": str(strategy.buy_price_deviation),
+                    "sell_price_deviation": str(strategy.sell_price_deviation),
+                    "grid_levels": strategy.grid_levels,
+                    "polling_interval": str(strategy.polling_interval),
+                    "price_tolerance": str(strategy.price_tolerance),
+                    "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
+                    "stop_loss_delay": strategy.stop_loss_delay,
+                    "max_open_positions": strategy.max_open_positions,
+                    "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+                    "worker_name": strategy.worker_name,
+                },
+                "runtime_config": strategy_config,
+            }
+            send_run_strategy(
+                sid,
+                account_data,
+                strategy_config,
+                strategy_runtime=strategy_runtime,
+                worker_name=strategy.worker_name,
+            )
             success.append(sid)
         except Exception:
             failed.append(sid)

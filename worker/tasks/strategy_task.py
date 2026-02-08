@@ -65,6 +65,7 @@ def run_strategy(
     strategy_id: int,
     account_data: Dict[str, Any],
     strategy_config: Dict[str, Any],
+    strategy_runtime: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     Run a trading strategy as a Celery task.
@@ -93,12 +94,17 @@ def run_strategy(
         )
 
     # 2. Save running instance info to Redis
+    runtime_data = strategy_runtime or {}
+
     redis_client.set_running_info(
         strategy_id=strategy_id,
         task_id=task_id,
         worker_ip=worker_ip,
         worker_hostname=worker_hostname,
         status="running",
+        user_email=runtime_data.get("user_email"),
+        strategy_snapshot=runtime_data.get("strategy_snapshot", {}),
+        runtime_config=runtime_data.get("runtime_config", strategy_config),
     )
 
     logger.info(
