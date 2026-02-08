@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Monitor } from '@element-plus/icons-vue'
+import { Monitor, WarningFilled } from '@element-plus/icons-vue'
 import type { StrategyStatus } from '@/types'
 
 interface MonitorCardStrategy {
@@ -13,6 +13,7 @@ interface MonitorCardStrategy {
 const props = defineProps<{
   strategy: MonitorCardStrategy
   status: StrategyStatus | null
+  ultraCompact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 }>()
 
 const isRunning = computed(() => props.status?.is_running ?? false)
+const compactMode = computed(() => props.ultraCompact ?? false)
 
 const runTime = computed(() => {
   const startTime = props.status?.start_timestamp || props.status?.started_at
@@ -54,20 +56,20 @@ function formatPriceList(prices: number[] | undefined) {
   <div class="monitor-card">
     <div class="card-header">
       <div class="title">
-        <span>{{ strategy.name }}</span>
+        <span class="title-text">{{ strategy.name }}</span>
         <el-tag size="small" style="margin-left: 8px;">{{ strategy.symbol }}</el-tag>
       </div>
       <div class="status">
         <span :class="['status-dot', isRunning ? 'running' : 'stopped']"></span>
         <span>{{ isRunning ? '运行中' : '已停止' }}</span>
-        <span v-if="isRunning" style="margin-left: 16px; color: #909399;">
+        <span v-if="isRunning" class="run-time">
           运行时长: {{ runTime }}
         </span>
         <el-button
           v-if="isRunning"
           type="warning"
           size="small"
-          style="margin-left: 16px;"
+          class="action-btn"
           @click="emit('stop', strategy.id)"
         >
           停止
@@ -76,7 +78,7 @@ function formatPriceList(prices: number[] | undefined) {
           v-else
           type="success"
           size="small"
-          style="margin-left: 16px;"
+          class="action-btn"
           @click="emit('start', strategy.id)"
         >
           启动
@@ -85,14 +87,14 @@ function formatPriceList(prices: number[] | undefined) {
     </div>
 
     <!-- 显示运行节点信息 -->
-    <div v-if="isRunning && status?.worker_ip" class="worker-info">
+    <div v-if="isRunning && status?.worker_ip && !compactMode" class="worker-info">
       <el-icon><Monitor /></el-icon>
       <span>运行节点: {{ status.worker_ip }}</span>
       <el-tag v-if="status?.worker_hostname" size="small" type="info">{{ status.worker_hostname }}</el-tag>
     </div>
 
     <div class="card-body">
-      <div class="price-info">
+      <div class="price-info" :class="{ compact: compactMode }">
         <div class="info-item">
           <div class="label">当前价格</div>
           <div class="value">${{ formatPrice(status?.current_price) }}</div>
@@ -109,7 +111,14 @@ function formatPriceList(prices: number[] | undefined) {
         </div>
       </div>
 
-      <div class="orders-section">
+      <div v-if="compactMode" class="compact-summary">
+        <span class="summary-item">买单: {{ status?.pending_buys ?? 0 }}</span>
+        <span class="summary-item">卖单: {{ status?.pending_sells ?? 0 }}</span>
+        <span class="summary-item">持仓: {{ status?.position_count ?? 0 }}/{{ strategy.max_open_positions }}</span>
+        <span v-if="status?.worker_hostname" class="summary-item muted">{{ status.worker_hostname }}</span>
+      </div>
+
+      <div v-else class="orders-section">
         <div class="order-box buy">
           <div class="box-title">买单挂单</div>
           <div class="box-content">
@@ -151,7 +160,7 @@ function formatPriceList(prices: number[] | undefined) {
       </div>
     </div>
 
-    <div class="card-footer">
+    <div v-if="!compactMode || status?.last_error" class="card-footer" :class="{ compact: compactMode }">
       <div class="footer-item">
         <span class="label">持仓数:</span>
         <span class="value">{{ status?.position_count ?? 0 }}/{{ strategy.max_open_positions }}</span>
@@ -167,34 +176,46 @@ function formatPriceList(prices: number[] | undefined) {
 <style scoped>
 .monitor-card {
   background: #fff;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.08);
 }
 
 .card-header {
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-bottom: 1px solid #ebeef5;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .title {
-  font-size: 16px;
+  display: flex;
+  align-items: center;
+  font-size: 15px;
   font-weight: 600;
+}
+
+.title-text {
+  line-height: 1.2;
 }
 
 .status {
   display: flex;
   align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  font-size: 13px;
+  color: #606266;
 }
 
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin-right: 8px;
 }
 
 .status-dot.running {
@@ -205,37 +226,50 @@ function formatPriceList(prices: number[] | undefined) {
   background-color: #f56c6c;
 }
 
+.run-time {
+  color: #909399;
+}
+
+.action-btn {
+  margin-left: 4px;
+}
+
 .worker-info {
-  padding: 8px 20px;
+  padding: 6px 16px;
   background: #f0f9eb;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12px;
   color: #67c23a;
   border-bottom: 1px solid #ebeef5;
 }
 
 .card-body {
-  padding: 20px;
+  padding: 14px 16px;
 }
 
 .price-info {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.price-info.compact {
+  margin-bottom: 8px;
 }
 
 .info-item .label {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .info-item .value {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .info-item .value.positive {
@@ -249,50 +283,85 @@ function formatPriceList(prices: number[] | undefined) {
 .orders-section {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 10px;
+}
+
+.compact-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: #303133;
+  flex-wrap: wrap;
+}
+
+.summary-item {
+  font-weight: 500;
+}
+
+.summary-item.muted {
+  color: #909399;
+  font-weight: 400;
 }
 
 .order-box {
   background: #f5f7fa;
-  border-radius: 6px;
-  padding: 16px;
+  border-radius: 5px;
+  padding: 10px 12px;
 }
 
 .order-box.buy {
-  border-left: 4px solid #67c23a;
+  border-left: 3px solid #67c23a;
 }
 
 .order-box.sell {
-  border-left: 4px solid #f56c6c;
+  border-left: 3px solid #f56c6c;
 }
 
 .box-title {
   font-weight: 600;
-  margin-bottom: 12px;
+  font-size: 13px;
+  margin-bottom: 8px;
 }
 
 .stat-row {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
 }
 
 .stat-row .label {
   color: #909399;
 }
 
+.stat-row:last-child {
+  margin-bottom: 0;
+}
+
 .card-footer {
-  padding: 16px 20px;
+  padding: 10px 16px;
   background: #fafafa;
   display: flex;
   justify-content: space-between;
-  border-radius: 0 0 8px 8px;
+  align-items: center;
+  font-size: 12px;
+  border-radius: 0 0 6px 6px;
+}
+
+.card-footer.compact {
+  padding: 8px 16px;
 }
 
 .footer-item {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.footer-item .value {
+  font-weight: 600;
 }
 
 .footer-item.error {

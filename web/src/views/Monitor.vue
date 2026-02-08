@@ -5,9 +5,12 @@ import type { RunningStrategy, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import MonitorCard from '@/components/MonitorCard.vue'
 
+const ULTRA_COMPACT_STORAGE_KEY = 'monitor_ultra_compact_mode'
+
 const strategies = ref<RunningStrategy[]>([])
 const statusMap = ref<Map<number, StrategyStatus>>(new Map())
 const loading = ref(true)
+const ultraCompact = ref(true)
 let isFetching = false
 let pollTimer: number | null = null
 
@@ -96,6 +99,12 @@ function getStatus(id: number): StrategyStatus | null {
   return statusMap.value.get(id) || null
 }
 
+function handleCompactModeChange(value: boolean | string | number) {
+  const enabled = Boolean(value)
+  ultraCompact.value = enabled
+  window.localStorage.setItem(ULTRA_COMPACT_STORAGE_KEY, enabled ? '1' : '0')
+}
+
 const monitorCardStrategy = computed(() => {
   return runningStrategies.value.map(item => ({
     id: item.strategy_id,
@@ -106,6 +115,11 @@ const monitorCardStrategy = computed(() => {
 })
 
 onMounted(async () => {
+  const savedMode = window.localStorage.getItem(ULTRA_COMPACT_STORAGE_KEY)
+  if (savedMode !== null) {
+    ultraCompact.value = savedMode === '1'
+  }
+
   await fetchStrategies({ showLoading: true })
   startPolling()
 })
@@ -117,8 +131,12 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header monitor-header">
       <h2>实时监控</h2>
+      <div class="compact-toggle">
+        <span>超紧凑模式</span>
+        <el-switch :model-value="ultraCompact" @change="handleCompactModeChange" />
+      </div>
     </div>
 
     <div v-loading="loading">
@@ -127,6 +145,7 @@ onUnmounted(() => {
         :key="strategy.id"
         :strategy="strategy"
         :status="getStatus(strategy.id)"
+        :ultra-compact="ultraCompact"
         @start="handleStart"
         @stop="handleStop"
       />
@@ -134,3 +153,20 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.monitor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.compact-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #606266;
+}
+</style>
