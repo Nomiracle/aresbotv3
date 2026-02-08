@@ -68,6 +68,7 @@ class TradingEngine:
     def start(self) -> None:
         """启动交易引擎"""
         logger.info(f"启动交易引擎: {self.strategy.config.symbol}")
+        self._recover_open_orders()
         self._running = True
         self._run_loop()
 
@@ -132,6 +133,42 @@ class TradingEngine:
                 self._current_price = price
         except Exception as e:
             logger.warning(f"获取价格失败: {e}")
+
+    def _recover_open_orders(self) -> None:
+        """启动时恢复挂单缓存"""
+        try:
+            open_orders = self.exchange.get_open_orders()
+        except Exception as err:
+            logger.warning("恢复挂单失败: %s", err)
+            return
+
+        if not open_orders:
+            return
+
+        recovered_buys: Dict[str, Order] = {}
+        recovered_sells: Dict[str, Order] = {}
+        for exchange_order in open_orders:
+            order = Order(
+                order_id=exchange_order.order_id,
+                symbol=exchange_order.symbol,
+                side=exchange_order.side,
+                price=exchange_order.price,
+                quantity=exchange_order.quantity,
+                state=OrderState.PLACED,
+                filled_quantity=exchange_order.filled_quantity,
+                filled_price=exchange_order.price,
+                related_order_id=(exchange_order.extra or {}).get("related_order_id"),
+            )
+            if order.side == "buy":
+                recovered_buys[order.order_id] = order
+            elif order.side == "sell":
+                recovered_sells[order.order_id] = order
+
+        with self._lock:
+            self._pending_buys.update(recovered_buys)
+            self._pending_sells.update(recovered_sells)
+
+        logger.info("启动恢复挂单 buys=%s sells=%s", len(recovered_buys), len(recovered_sells))
 
     def _sync_orders(self) -> None:
         """同步订单状态"""
