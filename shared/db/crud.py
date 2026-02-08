@@ -101,6 +101,7 @@ class StrategyCRUD:
         stop_loss_delay: Optional[int] = None,
         max_open_positions: int = 10,
         max_daily_drawdown: Optional[Decimal] = None,
+        worker_name: Optional[str] = None,
     ) -> Strategy:
         """Create a new strategy."""
         strategy = Strategy(
@@ -118,6 +119,7 @@ class StrategyCRUD:
             stop_loss_delay=stop_loss_delay,
             max_open_positions=max_open_positions,
             max_daily_drawdown=max_daily_drawdown,
+            worker_name=worker_name,
         )
         session.add(strategy)
         await session.flush()
