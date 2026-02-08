@@ -132,7 +132,7 @@ class BinanceSpot(BaseExchange):
         if self._trading_rules:
             return self._trading_rules
 
-        self._exchange.load_markets()
+        self._run_sync(self._exchange.load_markets())
         market = self._exchange.market(self.symbol)
 
         precision = market.get('precision', {})
@@ -160,8 +160,30 @@ class BinanceSpot(BaseExchange):
         """获取当前价格 - 优先使用WS缓存"""
         if self._current_price:
             return self._current_price
-        ticker = self._exchange.fetch_ticker(self.symbol)
+        # 使用同步方法获取价格
+        ticker = self._run_sync(self._exchange.fetch_ticker(self.symbol))
         return ticker['last']
+
+    def _run_sync(self, coro):
+        """在同步环境中运行异步协程"""
+        if self._loop and self._loop.is_running():
+            import concurrent.futures
+            future = concurrent.futures.Future()
+            def callback():
+                try:
+                    result = asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=10)
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+            self._loop.call_soon_threadsafe(callback)
+            return future.result(timeout=10)
+        else:
+            # 创建新的事件循环运行
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
 
     def place_batch_orders(self, orders: List[Dict]) -> List[OrderResult]:
         """批量下单 - 使用币安batchOrders API（最多5个）"""
@@ -183,9 +205,9 @@ class BinanceSpot(BaseExchange):
                 })
 
             try:
-                resp = self._exchange.private_post_batch_orders({
+                resp = self._run_sync(self._exchange.private_post_batch_orders({
                     'batchOrders': self._exchange.json(batch_params)
-                })
+                }))
                 for item in resp:
                     if 'orderId' in item:
                         results.append(OrderResult(
@@ -213,7 +235,7 @@ class BinanceSpot(BaseExchange):
             return []
 
         try:
-            self._exchange.cancel_orders(order_ids, self.symbol)
+            self._run_sync(self._exchange.cancel_orders(order_ids, self.symbol))
             results = []
             for oid in order_ids:
                 if oid in self._orders_cache:
@@ -236,7 +258,7 @@ class BinanceSpot(BaseExchange):
             return self._orders_cache[order_id]
         # 回退到REST
         try:
-            order = self._exchange.fetch_order(order_id, self.symbol)
+            order = self._run_sync(self._exchange.fetch_order(order_id, self.symbol))
             self._update_order_cache(order)
             return self._orders_cache.get(order_id)
         except Exception:
@@ -253,7 +275,7 @@ class BinanceSpot(BaseExchange):
             return open_orders
         # 回退到REST
         try:
-            orders = self._exchange.fetch_open_orders(self.symbol)
+            orders = self._run_sync(self._exchange.fetch_open_orders(self.symbol))
             for order in orders:
                 self._update_order_cache(order)
             return [
@@ -265,5 +287,5 @@ class BinanceSpot(BaseExchange):
 
     def get_balance(self, asset: str) -> float:
         """获取资产余额"""
-        balance = self._exchange.fetch_balance()
+        balance = self._run_sync(self._exchange.fetch_balance())
         return balance.get(asset, {}).get('free', 0)

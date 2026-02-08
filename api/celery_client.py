@@ -38,9 +38,13 @@ def get_active_workers() -> List[Dict]:
         stats = stats_result.get(worker_name, {})
         # worker_name format: worker@hostname
         hostname = worker_name.split('@')[-1] if '@' in worker_name else worker_name
+        # 尝试从 broker 连接信息获取 IP
+        broker_info = stats.get('broker', {})
+        worker_ip = broker_info.get('hostname', '')
         workers.append({
             'name': worker_name,
             'hostname': hostname,
+            'ip': worker_ip,
             'concurrency': stats.get('pool', {}).get('max-concurrency', 0),
             'active_tasks': len(stats.get('pool', {}).get('processes', [])),
         })

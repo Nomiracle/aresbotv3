@@ -83,10 +83,10 @@ watch(() => props.visible, (val) => {
         stop_loss_delay: props.strategy.stop_loss_delay,
         max_open_positions: props.strategy.max_open_positions,
         max_daily_drawdown: props.strategy.max_daily_drawdown,
-        worker_name: props.strategy.worker_name,
+        worker_name: props.strategy.worker_name || null,
       })
     } else {
-      Object.assign(form, defaultForm)
+      Object.assign(form, { ...defaultForm, account_id: undefined, worker_name: null })
     }
   }
 })
@@ -167,7 +167,12 @@ onMounted(() => {
       </el-form-item>
       <el-form-item label="指定 Worker">
         <el-select v-model="form.worker_name" placeholder="自动分配" clearable style="width: 100%">
-          <el-option v-for="(w, idx) in workers" :key="w.name" :label="`${w.hostname} (#${idx + 1})`" :value="w.name" />
+          <el-option
+            v-for="(w, idx) in workers"
+            :key="w.name"
+            :label="`#${idx + 1} ${w.hostname}${w.ip ? ' (' + w.ip + ')' : ''}`"
+            :value="w.name"
+          />
         </el-select>
       </el-form-item>
     </el-form>
