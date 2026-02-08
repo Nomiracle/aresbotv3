@@ -4,7 +4,7 @@ import threading
 import logging
 import time
 
-from ..core import (
+from core import (
     BaseStrategy,
     BaseExchange,
     EventBus,
@@ -15,8 +15,8 @@ from ..core import (
     OrderStatus,
     ExchangeOrder,
 )
-from ..domain import Order, OrderState, PositionTracker, RiskManager
-from .position_syncer import PositionSyncer
+from domain import Order, OrderState, PositionTracker, RiskManager
+from engine.position_syncer import PositionSyncer
 
 logger = logging.getLogger(__name__)
 

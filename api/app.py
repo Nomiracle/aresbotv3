@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from ..db.database import create_tables, close_db
+from db.database import create_tables, close_db
 
 
 @asynccontextmanager
@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
     @app.get("/health/redis")
     async def redis_health_check():
         """Check Redis connection health."""
-        from ..core.redis_client import get_redis_client
+        from core.redis_client import get_redis_client
         try:
             redis_client = get_redis_client()
             if redis_client.ping():

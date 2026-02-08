@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..deps import get_current_user, get_db_session
-from ...db.crud import AccountCRUD
-from ...db.models import ExchangeAccount
-from ...utils.crypto import encrypt_api_secret
+from api.deps import get_current_user, get_db_session
+from db.crud import AccountCRUD
+from db.models import ExchangeAccount
+from utils.crypto import encrypt_api_secret
 
 router = APIRouter()
 

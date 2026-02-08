@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..deps import get_current_user, get_db_session
-from ...db.crud import TradeCRUD
-from ...db.models import Trade
+from api.deps import get_current_user, get_db_session
+from db.crud import TradeCRUD
+from db.models import Trade
 
 router = APIRouter()
 

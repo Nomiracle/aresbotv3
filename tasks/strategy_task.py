@@ -6,16 +6,20 @@ from typing import Any, Dict
 from celery import Task
 from celery.exceptions import Reject
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from celery_app import app
-from AresBotv3.config import ExchangeConfig, TradingConfig
-from AresBotv3.core.redis_client import get_redis_client
-from AresBotv3.core.state_store import StateStore
-from AresBotv3.domain.risk_manager import RiskManager, RiskConfig
-from AresBotv3.engine.trading_engine import TradingEngine
-from AresBotv3.exchanges.binance_spot import BinanceSpot
-from AresBotv3.strategies.grid_strategy import GridStrategy
-from AresBotv3.utils.crypto import decrypt_api_secret
-from AresBotv3.utils.logger import get_logger
+from config import ExchangeConfig, TradingConfig
+from core.redis_client import get_redis_client
+from core.state_store import StateStore
+from domain.risk_manager import RiskManager, RiskConfig
+from engine.trading_engine import TradingEngine
+from exchanges.binance_spot import BinanceSpot
+from strategies.grid_strategy import GridStrategy
+from utils.crypto import decrypt_api_secret
+from utils.logger import get_logger
 
 
 logger = get_logger("celery.task")

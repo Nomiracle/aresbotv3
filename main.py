@@ -2,13 +2,16 @@
 import os
 import sys
 
+# 将当前目录添加到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import uvicorn
 import yaml
 
-from AresBotv3.api.app import create_app
-from AresBotv3.db.database import init_db
-from AresBotv3.utils.crypto import init_encryption
-from AresBotv3.utils.logger import setup_logger
+from api.app import create_app
+from db.database import init_db
+from utils.crypto import init_encryption
+from utils.logger import setup_logger
 
 
 def load_config(config_path: str = "config.yaml") -> dict:

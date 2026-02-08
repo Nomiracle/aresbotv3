@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..deps import get_current_user, get_db_session
-from ...core.redis_client import get_redis_client
-from ...db.crud import StrategyCRUD, AccountCRUD
-from ...db.models import Strategy
+from api.deps import get_current_user, get_db_session
+from core.redis_client import get_redis_client
+from db.crud import StrategyCRUD, AccountCRUD
+from db.models import Strategy
 from tasks.strategy_task import run_strategy
 
 router = APIRouter()
