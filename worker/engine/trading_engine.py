@@ -76,6 +76,20 @@ class TradingEngine:
         """停止交易引擎"""
         logger.info("停止交易引擎")
         self._running = False
+        self._cancel_all_pending_orders()
+        self._update_status(force=True, source="stop")
+
+    def _cancel_all_pending_orders(self) -> None:
+        """停止时取消所有挂单"""
+        with self._lock:
+            order_ids = [*self._pending_buys.keys(), *self._pending_sells.keys()]
+
+        if order_ids:
+            self.exchange.cancel_batch_orders(order_ids)
+
+        with self._lock:
+            self._pending_buys.clear()
+            self._pending_sells.clear()
 
     def _run_loop(self) -> None:
         """主循环"""
