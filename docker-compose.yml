@@ -40,7 +40,9 @@ services:
     restart: unless-stopped
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "${API_PORT:-48000}:8000"
     environment:
@@ -65,7 +67,9 @@ services:
     restart: unless-stopped
 
   worker:
-    build: ./worker
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
