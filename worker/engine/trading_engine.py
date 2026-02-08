@@ -482,26 +482,39 @@ class TradingEngine:
         logger.debug("触发改价 cancel_count=%s", len(to_cancel))
 
         # 批量取消
-        self.exchange.cancel_batch_orders(to_cancel)
+        cancel_results = self.exchange.cancel_batch_orders(to_cancel)
+        cancelled_ids = {
+            result.order_id
+            for result in cancel_results
+            if result.success and result.order_id
+        }
+        place_candidates = [
+            payload for payload in to_place if payload['_order'].order_id in cancelled_ids
+        ]
+
+        if not place_candidates:
+            return
 
         # 批量下新单
-        place_params = [{'side': p['side'], 'price': p['price'], 'quantity': p['quantity']} for p in to_place]
+        place_params = [
+            {'side': p['side'], 'price': p['price'], 'quantity': p['quantity']}
+            for p in place_candidates
+        ]
         results = self.exchange.place_batch_orders(place_params)
 
         # 更新本地订单
         with self._lock:
-            for i, result in enumerate(results):
-                if result.success and result.order_id:
-                    old_order = to_place[i]['_order']
-                    new_price = to_place[i]['_new_price']
+            for index, payload in enumerate(place_candidates):
+                old_order = payload['_order']
+                new_price = payload['_new_price']
+                result = results[index] if index < len(results) else None
 
-                    # 移除旧订单
-                    if old_order.side == 'buy':
-                        self._pending_buys.pop(old_order.order_id, None)
-                    else:
-                        self._pending_sells.pop(old_order.order_id, None)
+                if old_order.side == 'buy':
+                    self._pending_buys.pop(old_order.order_id, None)
+                else:
+                    self._pending_sells.pop(old_order.order_id, None)
 
-                    # 添加新订单
+                if result and result.success and result.order_id:
                     new_order = Order(
                         order_id=result.order_id,
                         symbol=old_order.symbol,
@@ -518,6 +531,8 @@ class TradingEngine:
                         self._pending_sells[result.order_id] = new_order
 
                     logger.info(f"订单改价成功: {old_order.order_id} -> {result.order_id}, 新价格={new_price}")
+                else:
+                    logger.warning("订单改价重下失败，已移除旧单: %s", old_order.order_id)
 
     def _check_stop_loss(self) -> None:
         """检查止损"""
