@@ -23,11 +23,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    from .routes import account, strategy, trade
+    from .routes import account, strategy, trade, user
 
     app.include_router(account.router, prefix="/api/accounts", tags=["accounts"])
     app.include_router(strategy.router, prefix="/api/strategies", tags=["strategies"])
     app.include_router(trade.router, prefix="/api/trades", tags=["trades"])
+    app.include_router(user.router, prefix="/api/user", tags=["user"])
 
     @app.get("/health")
     async def health_check():
