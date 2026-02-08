@@ -39,6 +39,16 @@ def _cleanup_runtime(redis_client, strategy_id: int) -> None:
     redis_client.clear_running_info(strategy_id)
 
 
+def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, Any]) -> None:
+    redis_client.update_running_status(
+        strategy_id=strategy_id,
+        current_price=status.get("current_price"),
+        pending_buys=status.get("pending_buys"),
+        pending_sells=status.get("pending_sells"),
+        position_count=status.get("position_count"),
+    )
+
+
 def get_worker_ip() -> str:
     """Get the IP address of the current worker."""
     try:
@@ -269,13 +279,7 @@ def _create_engine(
 
     # Set up status update callback
     def on_status_update(status: Dict[str, Any]) -> None:
-        redis_client.update_running_status(
-            strategy_id=strategy_id,
-            current_price=status.get("current_price"),
-            pending_buys=status.get("pending_buys"),
-            pending_sells=status.get("pending_sells"),
-            position_count=status.get("position_count"),
-        )
+        _persist_runtime_status(redis_client, strategy_id, status)
 
     engine.on_status_update = on_status_update
 
