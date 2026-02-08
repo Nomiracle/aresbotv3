@@ -153,13 +153,15 @@ class TradingEngine:
         """检查订单状态变化"""
         for order_id in list(pending_orders.keys()):
             ex_order = exchange_order_map.get(order_id)
-
             if ex_order is None:
-                order = self.exchange.get_order(order_id)
-                if order and order.status == OrderStatus.FILLED:
-                    self._handle_order_filled(order)
-                elif order and order.status == OrderStatus.CANCELLED:
-                    self._handle_order_cancelled(order)
+                ex_order = self.exchange.get_order(order_id)
+                if ex_order is None:
+                    continue
+
+            if ex_order.status == OrderStatus.FILLED:
+                self._handle_order_filled(ex_order)
+            elif ex_order.status == OrderStatus.CANCELLED:
+                self._handle_order_cancelled(ex_order)
             elif ex_order.status == OrderStatus.PARTIALLY_FILLED:
                 self._handle_order_partially_filled(ex_order)
 
