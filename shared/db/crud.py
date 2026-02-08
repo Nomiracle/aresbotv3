@@ -179,7 +179,7 @@ class StrategyCRUD:
         for key, value in kwargs.items():
             if hasattr(strategy, key) and value is not None:
                 setattr(strategy, key, value)
-        strategy.updated_at = datetime.utcnow()
+        strategy.updated_at = datetime.now()
         await session.flush()
         await session.refresh(strategy)
         return strategy

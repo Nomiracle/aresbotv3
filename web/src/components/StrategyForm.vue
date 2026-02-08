@@ -19,8 +19,8 @@ const formRef = ref<FormInstance>()
 const accounts = ref<Account[]>([])
 const workers = ref<WorkerInfo[]>([])
 
-const defaultForm: StrategyCreate = {
-  account_id: 0,
+const defaultForm = {
+  account_id: undefined as number | undefined,
   name: '',
   symbol: '',
   base_order_size: '0.01',
@@ -29,17 +29,17 @@ const defaultForm: StrategyCreate = {
   grid_levels: 3,
   polling_interval: '1.0',
   price_tolerance: '0.1',
-  stop_loss: null,
-  stop_loss_delay: null,
+  stop_loss: null as string | null,
+  stop_loss_delay: null as number | null,
   max_open_positions: 10,
-  max_daily_drawdown: null,
-  worker_name: null,
+  max_daily_drawdown: null as string | null,
+  worker_name: null as string | null,
 }
 
-const form = reactive<StrategyCreate>({ ...defaultForm })
+const form = reactive({ ...defaultForm })
 
 const rules: FormRules = {
-  account_id: [{ required: true, message: '请选择账户', trigger: 'change' }],
+  account_id: [{ required: true, message: '请选择账户', trigger: 'change', type: 'number' }],
   name: [{ required: true, message: '请输入策略名称', trigger: 'blur' }],
   symbol: [{ required: true, message: '请输入交易对', trigger: 'blur' }],
   base_order_size: [{ required: true, message: '请输入基础订单量', trigger: 'blur' }],
@@ -50,6 +50,10 @@ const rules: FormRules = {
 
 async function fetchAccounts() {
   accounts.value = await accountApi.getAll()
+  // 新建时默认选择第一个账户
+  if (!props.strategy && accounts.value.length > 0 && !form.account_id) {
+    form.account_id = accounts.value[0].id
+  }
 }
 
 async function fetchWorkers() {
@@ -95,7 +99,7 @@ function handleClose() {
 async function handleSubmit() {
   if (!formRef.value) return
   await formRef.value.validate()
-  emit('submit', { ...form })
+  emit('submit', { ...form } as StrategyCreate)
   handleClose()
 }
 

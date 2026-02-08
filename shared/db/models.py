@@ -19,7 +19,7 @@ class ExchangeAccount(SQLModel, table=True):
     api_secret: str = Field(max_length=255)
     testnet: bool = Field(default=False)
     is_active: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
     strategies: List["Strategy"] = Relationship(back_populates="account")
 
@@ -56,8 +56,8 @@ class Strategy(SQLModel, table=True):
     # Worker settings
     worker_name: Optional[str] = Field(default=None, max_length=100)
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
     account: Optional[ExchangeAccount] = Relationship(back_populates="strategies")
     trades: List["Trade"] = Relationship(back_populates="strategy")
