@@ -597,6 +597,40 @@ class TradingEngine:
 
         logger.debug("触发定期同步 pending_sells=%s", len(pending_sells_copy))
         self.position_syncer.sync(pending_sells_copy)
+        self._repair_positions_and_orders(pending_sells_copy)
+
+    def _repair_positions_and_orders(self, pending_sells: Dict[str, Order]) -> None:
+        """最小修复：补卖单、取消多余卖单"""
+        positions_without_sells = self.position_syncer.get_positions_without_sells(pending_sells)
+        for pos in positions_without_sells:
+            decision = self.strategy.should_sell(
+                buy_price=pos.entry_price,
+                buy_quantity=pos.quantity,
+                current_price=self._current_price,
+            )
+            if decision:
+                buy_order = Order(
+                    order_id=pos.order_id,
+                    symbol=pos.symbol,
+                    side='buy',
+                    price=pos.entry_price,
+                    quantity=pos.quantity,
+                    grid_index=pos.grid_index,
+                    state=OrderState.FILLED,
+                    filled_quantity=pos.quantity,
+                    filled_price=pos.entry_price,
+                )
+                self._place_sell_order(buy_order, decision.price)
+
+        excess_sells = self.position_syncer.get_excess_sells(pending_sells)
+        if not excess_sells:
+            return
+
+        cancel_ids = [order.order_id for order in excess_sells]
+        self.exchange.cancel_batch_orders(cancel_ids)
+        with self._lock:
+            for order_id in cancel_ids:
+                self._pending_sells.pop(order_id, None)
 
     def _update_status(self, force: bool = False, source: str = "periodic") -> None:
         """更新状态到外部（用于分布式部署）"""
