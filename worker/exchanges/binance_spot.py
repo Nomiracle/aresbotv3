@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional
 import ccxt.pro as ccxtpro
 
@@ -127,6 +128,43 @@ class BinanceSpot(BaseExchange):
             status=status,
         )
 
+    @staticmethod
+    def _build_rules_from_precision(
+        precision_value: object,
+        precision_mode: Optional[int],
+        default_decimals: int = 8,
+    ) -> tuple[float, int]:
+        """根据CCXT精度配置生成 (step/tick size, decimals)。"""
+        try:
+            numeric_precision = Decimal(str(precision_value))
+        except (InvalidOperation, TypeError, ValueError):
+            decimals = default_decimals
+            return 10 ** (-decimals), decimals
+
+        if numeric_precision <= 0:
+            decimals = default_decimals
+            return 10 ** (-decimals), decimals
+
+        decimal_places_mode = getattr(ccxtpro, 'DECIMAL_PLACES', None)
+        tick_size_mode = getattr(ccxtpro, 'TICK_SIZE', None)
+
+        if decimal_places_mode is not None and precision_mode == decimal_places_mode:
+            decimals = max(int(numeric_precision), 0)
+            return 10 ** (-decimals), decimals
+
+        if tick_size_mode is not None and precision_mode == tick_size_mode:
+            normalized = numeric_precision.normalize()
+            decimals = max(-normalized.as_tuple().exponent, 0)
+            return float(numeric_precision), decimals
+
+        if isinstance(precision_value, int):
+            decimals = max(precision_value, 0)
+            return 10 ** (-decimals), decimals
+
+        normalized = numeric_precision.normalize()
+        decimals = max(-normalized.as_tuple().exponent, 0)
+        return float(numeric_precision), decimals
+
     def get_trading_rules(self) -> TradingRules:
         """获取交易规则"""
         if self._trading_rules:
@@ -137,11 +175,18 @@ class BinanceSpot(BaseExchange):
 
         precision = market.get('precision', {})
         limits = market.get('limits', {})
+        precision_mode = getattr(self._exchange, 'precisionMode', None)
 
-        price_decimals = precision.get('price', 8)
-        qty_decimals = precision.get('amount', 8)
-        tick_size = 10 ** -price_decimals
-        step_size = 10 ** -qty_decimals
+        tick_size, price_decimals = self._build_rules_from_precision(
+            precision.get('price', 8),
+            precision_mode,
+            default_decimals=8,
+        )
+        step_size, qty_decimals = self._build_rules_from_precision(
+            precision.get('amount', 8),
+            precision_mode,
+            default_decimals=8,
+        )
         min_notional = limits.get('cost', {}).get('min', 0) or 0
 
         self._trading_rules = TradingRules(
