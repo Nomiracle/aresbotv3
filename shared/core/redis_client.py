@@ -212,7 +212,11 @@ class RedisClient:
         info = self.get_running_info(strategy_id)
         if not info:
             return False
-        return info.get("status") == "running"
+
+        # Treat both running and stopping as occupied states.
+        # This prevents duplicate starts while a stop request is still draining.
+        status = info.get("status")
+        return status in {"running", "stopping"}
 
     def register_worker(self, worker_id: str, ip: str = "", hostname: str = "") -> None:
         """Register a worker as active with its info."""

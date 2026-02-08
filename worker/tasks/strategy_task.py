@@ -5,7 +5,6 @@ import time
 from typing import Any, Dict
 
 from celery import Task
-from celery.exceptions import Reject
 
 import sys
 import os
@@ -36,6 +35,26 @@ def get_worker_ip() -> str:
         return ip
     except Exception:
         return socket.gethostbyname(socket.gethostname())
+
+
+def _is_task_active(task_id: str) -> bool:
+    """Check whether a Celery task is still active/reserved/scheduled."""
+    if not task_id:
+        return False
+
+    inspect = app.control.inspect()
+    states = [
+        inspect.active() or {},
+        inspect.reserved() or {},
+        inspect.scheduled() or {},
+    ]
+
+    for payload in states:
+        for tasks in payload.values():
+            for task in tasks:
+                if task.get("id") == task_id:
+                    return True
+    return False
 
 
 class StrategyTask(Task):
@@ -88,10 +107,37 @@ def run_strategy(
     # 1. Try to acquire distributed lock
     if not redis_client.acquire_lock(strategy_id, task_id):
         existing_task = redis_client.get_lock_holder(strategy_id)
-        raise Reject(
-            f"Strategy {strategy_id} already running (task_id: {existing_task})",
-            requeue=False,
-        )
+
+        # stale lock cleanup: lock holder task no longer exists in cluster
+        if existing_task and not _is_task_active(existing_task):
+            logger.warning(
+                f"Strategy {strategy_id} lock holder task {existing_task} not active, cleaning stale lock"
+            )
+            redis_client.release_lock(strategy_id)
+
+            if redis_client.acquire_lock(strategy_id, task_id):
+                logger.info(f"Strategy {strategy_id} acquired lock after stale cleanup")
+            else:
+                current_holder = redis_client.get_lock_holder(strategy_id)
+                logger.info(
+                    f"Skip duplicate start for strategy {strategy_id}, lock holder={current_holder}"
+                )
+                return {
+                    "strategy_id": strategy_id,
+                    "task_id": task_id,
+                    "status": "skipped_already_running",
+                    "existing_task_id": current_holder,
+                }
+        else:
+            logger.info(
+                f"Skip duplicate start for strategy {strategy_id}, lock holder={existing_task}"
+            )
+            return {
+                "strategy_id": strategy_id,
+                "task_id": task_id,
+                "status": "skipped_already_running",
+                "existing_task_id": existing_task,
+            }
 
     # 2. Save running instance info to Redis
     runtime_data = strategy_runtime or {}
