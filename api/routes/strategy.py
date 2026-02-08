@@ -2,16 +2,15 @@
 from decimal import Decimal
 from typing import List, Optional
 
-from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db_session
+from api.celery_client import send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
 from shared.db.crud import StrategyCRUD, AccountCRUD
 from shared.db.models import Strategy
-from worker.tasks.strategy_task import run_strategy
 
 router = APIRouter()
 
@@ -283,7 +282,7 @@ async def start_strategy(
     }
 
     # Submit Celery task
-    task = run_strategy.delay(
+    task_id = send_run_strategy(
         strategy_id=strategy_id,
         account_data=account_data,
         strategy_config=strategy_config,
@@ -292,7 +291,7 @@ async def start_strategy(
     return StrategyStatusResponse(
         strategy_id=strategy_id,
         is_running=True,
-        task_id=task.id,
+        task_id=task_id,
     )
 
 
@@ -314,9 +313,7 @@ async def stop_strategy(
 
     task_id = running_info.get("task_id")
     if task_id:
-        # Revoke the Celery task
-        from worker.celery_app import app as celery_app
-        celery_app.control.revoke(task_id, terminate=True, signal='SIGTERM')
+        revoke_task(task_id)
 
     # Update status in Redis
     redis_client.update_running_status(strategy_id=strategy_id, status="stopping")
