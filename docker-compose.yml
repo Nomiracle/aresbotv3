@@ -1,4 +1,11 @@
 services:
+  aresv3-web:
+    build: ./web
+    volumes:
+      - /var/www/aresbotv3:/app/dist
+    # 构建完成后退出，不需要持续运行
+    restart: "no"
+
   aresv3-api:
     build: .
     ports:
