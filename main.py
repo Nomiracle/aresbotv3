@@ -29,15 +29,15 @@ def build_db_url_from_config(db_config: dict) -> str:
     if db_config.get("url"):
         return db_config["url"]
 
-    # 从分开的配置构建
-    host = db_config.get("host", "localhost")
-    port = db_config.get("port", 3306)
-    user = db_config.get("user", "aresbot")
-    password = db_config.get("password", "")
-    database = db_config.get("name", "aresbot")
+    # 环境变量优先级高于配置文件
+    host = os.environ.get("DB_HOST") or db_config.get("host", "localhost")
+    port = os.environ.get("DB_PORT") or db_config.get("port", 3306)
+    user = os.environ.get("DB_USER") or db_config.get("user", "aresbot")
+    password = os.environ.get("DB_PASSWORD") or db_config.get("password", "")
+    database = os.environ.get("DB_NAME") or db_config.get("name", "aresbot")
 
     # URL 编码密码
-    encoded_password = quote_plus(password) if password else ""
+    encoded_password = quote_plus(str(password)) if password else ""
 
     return f"mysql+aiomysql://{user}:{encoded_password}@{host}:{port}/{database}"
 
