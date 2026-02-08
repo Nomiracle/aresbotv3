@@ -201,6 +201,7 @@ async def get_running_strategies(
             updated_at=info["updated_at"],
         )
         for info in running
+        if info.get("status") == "running"
     ]
 
 
@@ -369,9 +370,11 @@ async def get_strategy_status(
             is_running=False,
         )
 
+    is_running = info.get("status") == "running"
+
     return StrategyStatusResponse(
         strategy_id=strategy_id,
-        is_running=True,
+        is_running=is_running,
         task_id=info.get("task_id"),
         worker_ip=info.get("worker_ip"),
         worker_hostname=info.get("worker_hostname"),

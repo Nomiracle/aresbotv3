@@ -1,4 +1,5 @@
 """Strategy execution Celery task."""
+import signal
 import socket
 import time
 from typing import Any, Dict
@@ -79,6 +80,7 @@ def run_strategy(
     task_id = self.request.id
     worker_ip = get_worker_ip()
     worker_hostname = socket.gethostname()
+    previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
 
     redis_client = get_redis_client()
 
@@ -107,7 +109,18 @@ def run_strategy(
     try:
         # 3. Build and run the trading engine
         engine = _create_engine(strategy_id, account_data, strategy_config, redis_client)
+
+        def _handle_sigterm(signum, frame):
+            logger.info(f"Strategy {strategy_id} received SIGTERM, stopping engine")
+            try:
+                engine.stop()
+            except Exception as err:
+                logger.error(f"Strategy {strategy_id} stop on SIGTERM failed: {err}")
+
+        signal.signal(signal.SIGTERM, _handle_sigterm)
         engine.start()
+
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
         return {
             "strategy_id": strategy_id,
@@ -126,6 +139,11 @@ def run_strategy(
         raise
 
     finally:
+        try:
+            signal.signal(signal.SIGTERM, previous_sigterm_handler)
+        except Exception:
+            pass
+
         # 4. Cleanup
         redis_client.release_lock(strategy_id)
         redis_client.clear_running_info(strategy_id)

@@ -155,8 +155,10 @@ class RedisClient:
 
     def is_strategy_running(self, strategy_id: int) -> bool:
         """Check if a strategy is currently running."""
-        key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
-        return self._client.exists(key) > 0
+        info = self.get_running_info(strategy_id)
+        if not info:
+            return False
+        return info.get("status") == "running"
 
     def register_worker(self, worker_id: str, ip: str = "", hostname: str = "") -> None:
         """Register a worker as active with its info."""
