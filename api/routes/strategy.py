@@ -417,7 +417,11 @@ async def get_strategy_status(
             is_running=False,
         )
 
-    is_running = info.get("status") == "running"
+    is_running = _is_strategy_running(strategy_id)
+
+    # Keep response status consistent with occupancy decision.
+    if not is_running:
+        info["status"] = "stopped"
 
     return StrategyStatusResponse(
         strategy_id=strategy_id,

@@ -18,6 +18,7 @@ class RedisClient:
 
     # TTL settings
     LOCK_TTL = 86400  # 24 hours
+    STOPPING_TIMEOUT = int(os.environ.get("STRATEGY_STOPPING_TIMEOUT", "60"))
 
     def __init__(
         self,
@@ -213,10 +214,19 @@ class RedisClient:
         if not info:
             return False
 
-        # Treat both running and stopping as occupied states.
-        # This prevents duplicate starts while a stop request is still draining.
         status = info.get("status")
-        return status in {"running", "stopping"}
+        if status == "running":
+            return True
+
+        if status == "stopping":
+            updated_at = int(info.get("updated_at", 0) or 0)
+            if updated_at and int(time.time()) - updated_at > self.STOPPING_TIMEOUT:
+                self.release_lock(strategy_id)
+                self.clear_running_info(strategy_id)
+                return False
+            return True
+
+        return False
 
     def register_worker(self, worker_id: str, ip: str = "", hostname: str = "") -> None:
         """Register a worker as active with its info."""
