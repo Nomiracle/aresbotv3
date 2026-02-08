@@ -45,6 +45,7 @@ class TradingEngine:
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
+        self._stop_loss_triggered: set[str] = set()
         self._lock = threading.Lock()
 
         self._running = False
@@ -539,12 +540,15 @@ class TradingEngine:
         positions = self.position_tracker.get_all_positions()
 
         for pos in positions:
+            if pos.order_id in self._stop_loss_triggered:
+                continue
             should_stop, reason = self.risk_manager.check_stop_loss(
                 entry_price=pos.entry_price,
                 current_price=self._current_price,
                 entry_time=pos.created_at,
             )
             if should_stop:
+                self._stop_loss_triggered.add(pos.order_id)
                 self._execute_stop_loss(pos, reason)
 
     def _execute_stop_loss(self, position, reason: str) -> None:
@@ -566,6 +570,10 @@ class TradingEngine:
         rules = self.exchange.get_trading_rules()
         stop_price = self.exchange.align_price(self._current_price * 0.999, rules)
         stop_qty = self.exchange.align_quantity(position.quantity, rules)
+
+        if stop_qty <= 0:
+            logger.warning("止损数量无效，跳过下单: %s", position.order_id)
+            return
 
         results = self.exchange.place_batch_orders([{
             'side': 'sell',
