@@ -16,4 +16,15 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // 入口文件使用固定名称
+        entryFileNames: 'assets/[name]-[hash].js',
+        // chunk 文件使用哈希，确保缓存失效
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
+    },
+  },
 })

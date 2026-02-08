@@ -4,7 +4,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus, Trade } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import { tradeApi } from '@/api/trade'
-import { getWorkers, type WorkerInfo } from '@/api/worker'
 import StrategyForm from '@/components/StrategyForm.vue'
 import TradeTable from '@/components/TradeTable.vue'
 
@@ -17,12 +16,6 @@ const currentStrategy = ref<Strategy | null>(null)
 const recentTrades = ref<Trade[]>([])
 const tradesLoading = ref(false)
 const searchKeyword = ref('')
-
-// Worker 选择
-const workers = ref<WorkerInfo[]>([])
-const selectedWorker = ref<string>('')
-const startDialogVisible = ref(false)
-const startingStrategyId = ref<number | null>(null)
 
 const filteredStrategies = computed(() => {
   if (!searchKeyword.value) return strategies.value
@@ -120,20 +113,9 @@ async function handleSubmit(data: StrategyCreate) {
 async function handleStart() {
   if (!selectedStrategy.value) return
   try {
-    workers.value = await getWorkers()
-    selectedWorker.value = selectedStrategy.value.worker_name || ''
-    startingStrategyId.value = selectedStrategy.value.id
-    startDialogVisible.value = true
-  } catch {}
-}
-
-async function confirmStart() {
-  if (!startingStrategyId.value) return
-  try {
-    await strategyApi.start(startingStrategyId.value, selectedWorker.value || undefined)
+    await strategyApi.start(selectedStrategy.value.id)
     ElMessage.success('策略已启动')
-    startDialogVisible.value = false
-    fetchStatus(startingStrategyId.value)
+    fetchStatus(selectedStrategy.value.id)
   } catch {}
 }
 
@@ -280,20 +262,6 @@ onMounted(() => {
     </el-card>
 
     <StrategyForm v-model:visible="drawerVisible" :strategy="currentStrategy" @submit="handleSubmit" />
-
-    <el-dialog v-model="startDialogVisible" title="启动策略" width="400">
-      <el-form>
-        <el-form-item label="选择 Worker">
-          <el-select v-model="selectedWorker" placeholder="自动分配" clearable style="width: 100%">
-            <el-option v-for="(w, idx) in workers" :key="w.name" :label="`${w.hostname} (#${idx + 1})`" :value="w.name" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="startDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmStart">启动</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
