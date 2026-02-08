@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db_session
-from api.celery_client import send_run_strategy, revoke_task
+from api.celery_client import get_active_workers, send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
 from shared.db.crud import StrategyCRUD, AccountCRUD
 from shared.db.models import Strategy
@@ -124,6 +124,19 @@ def _is_strategy_running(strategy_id: int) -> bool:
     """Check if a strategy is running via Redis."""
     redis_client = get_redis_client()
     return redis_client.is_strategy_running(strategy_id)
+
+
+def _ensure_worker_available(worker_name: Optional[str]) -> None:
+    """Validate selected worker is currently online."""
+    if not worker_name:
+        return
+
+    active_worker_names = {worker["name"] for worker in get_active_workers()}
+    if worker_name not in active_worker_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"指定 Worker 不在线: {worker_name}",
+        )
 
 
 @router.get("", response_model=List[StrategyResponse])
@@ -293,6 +306,8 @@ async def start_strategy(
 
     # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
+    _ensure_worker_available(worker_name)
+
     task_id = send_run_strategy(
         strategy_id=strategy_id,
         account_data=account_data,
@@ -410,6 +425,7 @@ async def batch_start_strategies(
                 "max_open_positions": strategy.max_open_positions,
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             }
+            _ensure_worker_available(strategy.worker_name)
             send_run_strategy(sid, account_data, strategy_config, strategy.worker_name)
             success.append(sid)
         except Exception:

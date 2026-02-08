@@ -8,5 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY shared/ ./shared/
 COPY worker/ ./worker/
 COPY config.yaml .
+RUN chmod +x worker/entrypoint.sh
 
-CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info"]
+ENTRYPOINT ["worker/entrypoint.sh"]

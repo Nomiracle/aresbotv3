@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 from celery import Celery
-from celery.signals import worker_ready, worker_shutdown
+from celery.signals import celeryd_after_setup, worker_ready, worker_shutdown
 
 from shared.utils.crypto import init_encryption
 
@@ -90,29 +90,37 @@ app.conf.update(
 )
 
 
-# Worker registration signals
+# Worker setup & registration signals
+@celeryd_after_setup.connect
+def on_celeryd_after_setup(sender=None, instance=None, **kwargs):
+    """Add dedicated queue for this worker before consumers start."""
+    if not instance or not sender:
+        return
+
+    # sender format: celery@hostname
+    worker_name = str(sender)
+    instance.app.amqp.queues.select_add(worker_name)
+    print(f"Worker {worker_name} added dedicated queue before startup")
+
+
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):
-    """Register worker when it's ready and set up dedicated queue."""
+    """Register worker when it's ready."""
     from shared.core.redis_client import get_redis_client
-    worker_name = sender.hostname
+    worker_name = os.environ.get("WORKER_NAME") or sender.hostname
     worker_ip = _get_worker_ip()
     hostname = socket.gethostname()
 
-    # 动态添加以 worker 名称命名的专属队列
-    # 这样任务可以通过指定 queue=worker_name 发送到特定 worker
-    sender.app.amqp.queues.select_add(worker_name)
-
     redis_client = get_redis_client()
     redis_client.register_worker(worker_name, ip=worker_ip, hostname=hostname)
-    print(f"Worker {worker_name} registered with IP {worker_ip}, listening on queue: {worker_name}")
+    print(f"Worker {worker_name} registered with IP {worker_ip}")
 
 
 @worker_shutdown.connect
 def on_worker_shutdown(sender, **kwargs):
     """Unregister worker when it shuts down."""
     from shared.core.redis_client import get_redis_client
-    worker_name = sender.hostname
+    worker_name = os.environ.get("WORKER_NAME") or sender.hostname
     redis_client = get_redis_client()
     redis_client.unregister_worker(worker_name)
     print(f"Worker {worker_name} unregistered")
