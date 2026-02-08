@@ -93,14 +93,19 @@ app.conf.update(
 # Worker registration signals
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):
-    """Register worker when it's ready."""
+    """Register worker when it's ready and set up dedicated queue."""
     from shared.core.redis_client import get_redis_client
     worker_name = sender.hostname
     worker_ip = _get_worker_ip()
     hostname = socket.gethostname()
+
+    # 动态添加以 worker 名称命名的专属队列
+    # 这样任务可以通过指定 queue=worker_name 发送到特定 worker
+    sender.app.amqp.queues.select_add(worker_name)
+
     redis_client = get_redis_client()
     redis_client.register_worker(worker_name, ip=worker_ip, hostname=hostname)
-    print(f"Worker {worker_name} registered with IP {worker_ip}")
+    print(f"Worker {worker_name} registered with IP {worker_ip}, listening on queue: {worker_name}")
 
 
 @worker_shutdown.connect

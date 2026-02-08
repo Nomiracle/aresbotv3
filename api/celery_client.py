@@ -60,8 +60,18 @@ def send_run_strategy(
     strategy_config: dict,
     worker_name: Optional[str] = None,
 ) -> str:
-    """Send run_strategy task to worker, return task_id."""
+    """Send run_strategy task to worker, return task_id.
+
+    Args:
+        strategy_id: 策略ID
+        account_data: 账户数据
+        strategy_config: 策略配置
+        worker_name: 指定 worker 名称 (如 celery@hostname)，为空则自动分配到默认队列
+    """
     options = {}
+
+    # 如果指定了 worker，发送到该 worker 的专属队列
+    # Worker 启动时会自动监听以自己名字命名的队列
     if worker_name:
         options['queue'] = worker_name
 
