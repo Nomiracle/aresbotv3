@@ -1,4 +1,5 @@
 """Celery application configuration."""
+import logging
 import os
 import socket
 import sys
@@ -8,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 from celery import Celery
-from celery.signals import celeryd_after_setup, worker_ready, worker_shutdown
+from celery.signals import celeryd_after_setup, worker_process_init, worker_ready, worker_shutdown
 
 from shared.utils.crypto import init_encryption
 
@@ -38,7 +39,20 @@ def _get_worker_ip() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
+def _configure_ccxt_logger() -> None:
+    """Keep CCXT loggers at INFO to avoid verbose HTTP DEBUG output."""
+    ccxt_logger_names = (
+        "ccxt",
+        "ccxt.base",
+        "ccxt.base.exchange",
+        "ccxt.pro",
+    )
+    for logger_name in ccxt_logger_names:
+        logging.getLogger(logger_name).setLevel(logging.INFO)
+
+
 _init_encryption()
+_configure_ccxt_logger()
 
 # Redis connection settings
 REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
@@ -101,6 +115,12 @@ def on_celeryd_after_setup(sender=None, instance=None, **kwargs):
     worker_name = str(sender)
     instance.app.amqp.queues.select_add(worker_name)
     print(f"Worker {worker_name} added dedicated queue before startup")
+
+
+@worker_process_init.connect
+def on_worker_process_init(**kwargs):
+    """Apply logger levels in each forked worker process."""
+    _configure_ccxt_logger()
 
 
 @worker_ready.connect
