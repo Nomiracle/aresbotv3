@@ -1,18 +1,18 @@
-"""AresBot V3 - Web Dashboard Entry Point."""
+"""AresBot V3 - API Service Entry Point."""
 import os
 import sys
 from urllib.parse import quote_plus
 
-# 将当前目录添加到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import uvicorn
 import yaml
 
 from api.app import create_app
-from db.database import init_db, build_database_url
-from utils.crypto import init_encryption
-from utils.logger import setup_logger
+from shared.db.database import init_db, build_database_url
+from shared.utils.crypto import init_encryption
+from shared.utils.logger import setup_logger
 
 
 def load_config(config_path: str = "config.yaml") -> dict:

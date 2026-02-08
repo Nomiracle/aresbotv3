@@ -1,7 +1,30 @@
 """Celery application configuration."""
 import os
+import sys
 
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import yaml
 from celery import Celery
+
+from shared.utils.crypto import init_encryption
+
+
+def _init_encryption():
+    """Initialize encryption from config or environment."""
+    encryption_key = os.environ.get("ENCRYPTION_KEY", "")
+    if not encryption_key:
+        config_path = os.environ.get("CONFIG_PATH", "config.yaml")
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+                encryption_key = config.get("security", {}).get("encryption_key", "")
+    if encryption_key:
+        init_encryption(encryption_key)
+
+
+_init_encryption()
 
 # Redis connection settings
 REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
@@ -24,7 +47,7 @@ app = Celery(
     'aresbot',
     broker=CELERY_BROKER_URL,
     backend=CELERY_RESULT_BACKEND,
-    include=['tasks.strategy_task'],
+    include=['worker.tasks.strategy_task'],
 )
 
 # Celery configuration

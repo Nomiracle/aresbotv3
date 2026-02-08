@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   api:
-    build: .
+    build: ./api
     ports:
       - "${API_PORT:-48000}:8000"
     environment:
@@ -65,8 +65,7 @@ services:
     restart: unless-stopped
 
   worker:
-    build: .
-    command: celery -A celery_app worker --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${CELERY_CONCURRENCY:-4} --hostname=worker@%h
+    build: ./worker
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306

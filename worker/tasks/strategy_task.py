@@ -8,18 +8,18 @@ from celery.exceptions import Reject
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from celery_app import app
-from config import ExchangeConfig, TradingConfig
-from core.redis_client import get_redis_client
-from core.state_store import StateStore
-from domain.risk_manager import RiskManager, RiskConfig
-from engine.trading_engine import TradingEngine
-from exchanges.binance_spot import BinanceSpot
-from strategies.grid_strategy import GridStrategy
-from utils.crypto import decrypt_api_secret
-from utils.logger import get_logger
+from worker.celery_app import app
+from shared.config import ExchangeConfig, TradingConfig
+from shared.core.redis_client import get_redis_client
+from shared.core.state_store import StateStore
+from shared.domain.risk_manager import RiskManager, RiskConfig
+from shared.engine.trading_engine import TradingEngine
+from shared.exchanges.binance_spot import BinanceSpot
+from shared.strategies.grid_strategy import GridStrategy
+from shared.utils.crypto import decrypt_api_secret
+from shared.utils.logger import get_logger
 
 
 logger = get_logger("celery.task")
@@ -40,7 +40,7 @@ def get_worker_ip() -> str:
 class StrategyTask(Task):
     """Custom Celery task for strategy execution."""
 
-    name = "tasks.strategy_task.run_strategy"
+    name = "worker.tasks.strategy_task.run_strategy"
     max_retries = 0  # No retries for long-running tasks
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):

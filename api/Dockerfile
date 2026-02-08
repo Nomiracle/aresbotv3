@@ -5,8 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY shared/ ./shared/
+COPY api/ ./api/
+COPY config.yaml .
 
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+CMD ["python", "-m", "api.main"]
