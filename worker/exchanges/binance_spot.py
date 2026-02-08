@@ -712,11 +712,26 @@ class BinanceSpot(BaseExchange):
         return parsed_price
 
     def place_batch_orders(self, orders: List[Dict]) -> List[OrderResult]:
-        """批量下单 - 使用 CCXT create_orders 接口"""
+        """批量下单。
+
+        优先级：
+        1) create_orders (if exchange.has("create_orders"))
+        2) create_order_ws (逐单)
+        3) create_order (逐单)
+        """
         if not orders:
             return []
 
         self._log_debug("place_batch_orders called count=%s", len(orders))
+
+        if not self._supports_exchange_method("create_orders", "createOrders"):
+            if self._supports_exchange_method("create_order_ws", "createOrderWs"):
+                self._log_info("create_orders unsupported, fallback to create_order_ws one-by-one")
+                return self._place_orders_one_by_one(orders, use_ws=True)
+
+            self._log_info("create_orders/create_order_ws unsupported, fallback to create_order one-by-one")
+            return self._place_orders_one_by_one(orders, use_ws=False)
+
         results = []
         for i in range(0, len(orders), 5):
             batch = orders[i:i + 5]
@@ -777,18 +792,103 @@ class BinanceSpot(BaseExchange):
                         ))
             except Exception as err:
                 self._log_warning("batch order request error: %s", err)
-                results.extend([
-                    OrderResult(
-                        success=False,
-                        order_id=None,
-                        status=OrderStatus.FAILED,
-                        error=str(err),
-                    )
-                    for _ in batch
-                ])
+
+                # Some exchanges expose create_orders but do not support it for spot.
+                # Degrade gracefully to per-order endpoints.
+                if self._supports_exchange_method("create_order_ws", "createOrderWs"):
+                    self._log_info("batch create_orders failed, fallback to create_order_ws one-by-one")
+                    results.extend(self._place_orders_one_by_one(batch, use_ws=True))
+                else:
+                    self._log_info("batch create_orders failed, fallback to create_order one-by-one")
+                    results.extend(self._place_orders_one_by_one(batch, use_ws=False))
 
         success_count = sum(1 for result in results if result.success)
         self._log_debug("place_batch_orders finished success=%s total=%s", success_count, len(results))
+        return results
+
+    def _supports_exchange_method(self, has_key: str, method_name: str) -> bool:
+        """Check exchange capability from `exchange.has` and actual method existence."""
+        has_map = getattr(self._exchange, "has", {})
+        supports_from_has = bool(has_map.get(has_key) or has_map.get(method_name))
+        supports_from_attr = callable(getattr(self._exchange, method_name, None))
+        return supports_from_has and supports_from_attr
+
+    @staticmethod
+    def _normalize_order_payload(order: Dict[str, Any], default_symbol: str) -> Dict[str, Any]:
+        """Normalize order payload for one-by-one endpoints."""
+        amount = order.get("amount", order.get("quantity"))
+        order_type = str(order.get("type", "limit")).lower()
+        order_params = order.get("params") if isinstance(order.get("params"), dict) else {}
+        params = dict(order_params)
+        for field_name in ("timeInForce", "postOnly", "triggerPrice"):
+            if field_name in order and field_name not in params:
+                params[field_name] = order[field_name]
+
+        return {
+            "symbol": str(order.get("symbol", default_symbol)),
+            "type": order_type,
+            "side": str(order["side"]).lower(),
+            "amount": amount,
+            "price": order.get("price"),
+            "params": params,
+        }
+
+    def _place_orders_one_by_one(self, orders: List[Dict], use_ws: bool) -> List[OrderResult]:
+        """Fallback path for per-order creation via ws/rest endpoints."""
+        results: List[OrderResult] = []
+        method_name = "create_order_ws" if use_ws else "create_order"
+
+        for raw_order in orders:
+            order = self._normalize_order_payload(raw_order, self._market_symbol)
+
+            try:
+                if use_ws:
+                    response = self._run_sync(
+                        lambda order=order: self._exchange.create_order_ws(
+                            order["symbol"],
+                            order["type"],
+                            order["side"],
+                            order["amount"],
+                            order["price"],
+                            order["params"],
+                        ),
+                        timeout=self._sync_timeout,
+                    )
+                else:
+                    response = self._run_sync(
+                        lambda order=order: self._exchange.create_order(
+                            order["symbol"],
+                            order["type"],
+                            order["side"],
+                            order["amount"],
+                            order["price"],
+                            order["params"],
+                        ),
+                        timeout=self._sync_timeout,
+                    )
+
+                order_id = response.get("id") or response.get("orderId")
+                if order_id is None:
+                    raise ValueError(f"{method_name} missing order id response={response}")
+
+                if isinstance(response, dict):
+                    self._update_order_cache(response)
+                results.append(OrderResult(
+                    success=True,
+                    order_id=str(order_id),
+                    status=OrderStatus.PLACED,
+                ))
+            except Exception as err:
+                self._log_warning("%s fallback failed: %s", method_name, err)
+                results.append(OrderResult(
+                    success=False,
+                    order_id=None,
+                    status=OrderStatus.FAILED,
+                    error=str(err),
+                ))
+
+        success_count = sum(1 for result in results if result.success)
+        self._log_debug("%s fallback finished success=%s total=%s", method_name, success_count, len(results))
         return results
 
     def cancel_batch_orders(self, order_ids: List[str]) -> List[OrderResult]:
