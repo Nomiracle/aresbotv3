@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import threading
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional
 import ccxt.pro as ccxtpro
@@ -51,6 +53,12 @@ class BinanceSpot(BaseExchange):
         self._ws_running = False
         self._ws_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        timeout_raw = os.environ.get("BINANCE_SYNC_TIMEOUT", "10")
+        try:
+            self._sync_timeout = max(float(timeout_raw), 1.0)
+        except ValueError:
+            self._sync_timeout = 10.0
 
         api_key_prefix = (api_key or "")[:8]
         self._log_prefix = f"[{self.symbol}] [{api_key_prefix}]"
@@ -238,29 +246,36 @@ class BinanceSpot(BaseExchange):
             self._log_debug("ticker from ws cache: %s", self._current_price)
             return self._current_price
         # 使用同步方法获取价格
-        ticker = self._run_sync(self._exchange.fetch_ticker(self.symbol))
+        ticker = self._run_sync(self._exchange.fetch_ticker(self.symbol), timeout=self._sync_timeout)
         last_price = ticker['last']
         self._log_debug("ticker from rest: %s", last_price)
         return last_price
 
-    def _run_sync(self, coro):
+    def _run_sync(self, coro, timeout: Optional[float] = None):
         """在同步环境中运行异步协程"""
+        request_timeout = timeout if timeout is not None else self._sync_timeout
+
         if self._loop and self._loop.is_running():
             import concurrent.futures
             future = concurrent.futures.Future()
+
             def callback():
                 try:
-                    result = asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=10)
+                    result = asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=request_timeout)
                     future.set_result(result)
                 except Exception as err:
                     future.set_exception(err)
+
             self._loop.call_soon_threadsafe(callback)
-            return future.result(timeout=10)
+            return future.result(timeout=request_timeout)
         else:
             # 创建新的事件循环运行
             loop = asyncio.new_event_loop()
             try:
-                return loop.run_until_complete(coro)
+                return loop.run_until_complete(asyncio.wait_for(coro, timeout=request_timeout))
+            except asyncio.TimeoutError as err:
+                self._log_warning("_run_sync timeout after %.2fs", request_timeout)
+                raise TimeoutError(f"_run_sync timeout after {request_timeout:.2f}s") from err
             finally:
                 loop.close()
 
@@ -287,7 +302,7 @@ class BinanceSpot(BaseExchange):
             try:
                 resp = self._run_sync(self._exchange.private_post_batch_orders({
                     'batchOrders': self._exchange.json(batch_params)
-                }))
+                }), timeout=self._sync_timeout)
                 for item in resp:
                     if 'orderId' in item:
                         results.append(OrderResult(
@@ -320,7 +335,7 @@ class BinanceSpot(BaseExchange):
 
         self._log_debug("cancel_batch_orders called count=%s", len(order_ids))
         try:
-            self._run_sync(self._exchange.cancel_orders(order_ids, self.symbol))
+            self._run_sync(self._exchange.cancel_orders(order_ids, self.symbol), timeout=self._sync_timeout)
             results = []
             for oid in order_ids:
                 if oid in self._orders_cache:
@@ -347,7 +362,7 @@ class BinanceSpot(BaseExchange):
         # 回退到REST
         try:
             self._log_debug("get_order from rest order_id=%s", order_id)
-            order = self._run_sync(self._exchange.fetch_order(order_id, self.symbol))
+            order = self._run_sync(self._exchange.fetch_order(order_id, self.symbol), timeout=self._sync_timeout)
             self._update_order_cache(order)
             return self._orders_cache.get(order_id)
         except Exception as err:
@@ -365,24 +380,33 @@ class BinanceSpot(BaseExchange):
             self._log_debug("get_open_orders from cache count=%s", len(open_orders))
             return open_orders
         # 回退到REST
+        started_at = time.time()
         try:
             self._log_debug("get_open_orders from rest")
-            orders = self._run_sync(self._exchange.fetch_open_orders(self.symbol))
+            orders = self._run_sync(self._exchange.fetch_open_orders(self.symbol), timeout=self._sync_timeout)
             for order in orders:
                 self._update_order_cache(order)
             results = [
                 o for o in self._orders_cache.values()
                 if o.status in (OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED)
             ]
-            self._log_debug("get_open_orders from rest count=%s", len(results))
+            self._log_debug(
+                "get_open_orders from rest count=%s cost=%.3fs",
+                len(results),
+                time.time() - started_at,
+            )
             return results
         except Exception as err:
-            self._log_warning("get_open_orders failed: %s", err)
+            self._log_warning(
+                "get_open_orders failed after %.3fs: %s",
+                time.time() - started_at,
+                err,
+            )
             return []
 
     def get_balance(self, asset: str) -> float:
         """获取资产余额"""
-        balance = self._run_sync(self._exchange.fetch_balance())
+        balance = self._run_sync(self._exchange.fetch_balance(), timeout=self._sync_timeout)
         free_balance = balance.get(asset, {}).get('free', 0)
         self._log_debug("get_balance asset=%s free=%s", asset, free_balance)
         return free_balance
