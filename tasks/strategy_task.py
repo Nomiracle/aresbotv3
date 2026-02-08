@@ -41,7 +41,6 @@ class StrategyTask(Task):
     """Custom Celery task for strategy execution."""
 
     name = "tasks.strategy_task.run_strategy"
-    bind = True
     max_retries = 0  # No retries for long-running tasks
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
