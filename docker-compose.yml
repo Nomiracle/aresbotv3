@@ -87,6 +87,7 @@ services:
       - WORKER_NAME_FILE=/app/data/worker/worker_name
       - WORKER_NAME_PREFIX=${WORKER_NAME_PREFIX:-celery@worker}
       - WORKER_NODE_ID=${WORKER_NODE_ID:-}
+      - CELERY_LOG_LEVEL=${CELERY_LOG_LEVEL:-info}
     networks:
       - default
     depends_on:

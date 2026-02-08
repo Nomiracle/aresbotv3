@@ -3,6 +3,7 @@ set -eu
 
 WORKER_NAME_FILE="${WORKER_NAME_FILE:-/app/data/worker/worker_name}"
 WORKER_NAME_PREFIX="${WORKER_NAME_PREFIX:-celery@worker}"
+CELERY_LOG_LEVEL="${CELERY_LOG_LEVEL:-info}"
 
 mkdir -p "$(dirname "$WORKER_NAME_FILE")"
 
@@ -47,5 +48,5 @@ fi
 
 export WORKER_NAME="$FINAL_WORKER_NAME"
 
-echo "Starting Celery worker with name: $FINAL_WORKER_NAME"
-exec celery -A worker.celery_app worker --loglevel=info -n "$FINAL_WORKER_NAME"
+echo "Starting Celery worker with name: $FINAL_WORKER_NAME, loglevel: $CELERY_LOG_LEVEL"
+exec celery -A worker.celery_app worker --loglevel="$CELERY_LOG_LEVEL" -n "$FINAL_WORKER_NAME"
