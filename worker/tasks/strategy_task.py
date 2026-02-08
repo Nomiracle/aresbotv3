@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from worker.celery_app import app
-from shared.config import ExchangeConfig, TradingConfig
+from shared.config import TradingConfig
 from shared.core.redis_client import get_redis_client
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
@@ -143,14 +143,6 @@ def _create_engine(
     api_key = decrypt_api_secret(account_data["api_key"])
     api_secret = decrypt_api_secret(account_data["api_secret"])
 
-    # Build exchange config
-    exchange_config = ExchangeConfig(
-        api_key=api_key,
-        api_secret=api_secret,
-        symbol=strategy_config["symbol"],
-        testnet=account_data.get("testnet", False),
-    )
-
     # Build trading config
     trading_config = TradingConfig(
         symbol=strategy_config["symbol"],
@@ -171,7 +163,12 @@ def _create_engine(
     )
 
     # Create instances
-    exchange = BinanceSpot(exchange_config)
+    exchange = BinanceSpot(
+        api_key=api_key,
+        api_secret=api_secret,
+        symbol=strategy_config["symbol"],
+        testnet=account_data.get("testnet", False),
+    )
     grid_strategy = GridStrategy(trading_config)
     risk_manager = RiskManager(risk_config)
     state_store = StateStore(f"trades_{strategy_id}.db")

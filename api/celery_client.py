@@ -1,5 +1,6 @@
 """Celery client for API service."""
 import os
+from typing import List, Dict, Optional
 
 from celery import Celery
 
@@ -26,8 +27,37 @@ celery_app = Celery(
 TASK_RUN_STRATEGY = 'worker.tasks.strategy_task.run_strategy'
 
 
-def send_run_strategy(strategy_id: int, account_data: dict, strategy_config: dict) -> str:
+def get_active_workers() -> List[Dict]:
+    """Get list of active Celery workers with their info."""
+    inspect = celery_app.control.inspect()
+    ping_result = inspect.ping() or {}
+    stats_result = inspect.stats() or {}
+
+    workers = []
+    for worker_name, ping_data in ping_result.items():
+        stats = stats_result.get(worker_name, {})
+        # worker_name format: worker@hostname
+        hostname = worker_name.split('@')[-1] if '@' in worker_name else worker_name
+        workers.append({
+            'name': worker_name,
+            'hostname': hostname,
+            'concurrency': stats.get('pool', {}).get('max-concurrency', 0),
+            'active_tasks': len(stats.get('pool', {}).get('processes', [])),
+        })
+    return workers
+
+
+def send_run_strategy(
+    strategy_id: int,
+    account_data: dict,
+    strategy_config: dict,
+    worker_name: Optional[str] = None,
+) -> str:
     """Send run_strategy task to worker, return task_id."""
+    options = {}
+    if worker_name:
+        options['queue'] = worker_name
+
     result = celery_app.send_task(
         TASK_RUN_STRATEGY,
         kwargs={
@@ -35,6 +65,7 @@ def send_run_strategy(strategy_id: int, account_data: dict, strategy_config: dic
             'account_data': account_data,
             'strategy_config': strategy_config,
         },
+        **options,
     )
     return result.id
 

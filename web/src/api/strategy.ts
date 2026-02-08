@@ -26,8 +26,8 @@ export const strategyApi = {
     return api.get(`/strategies/${id}/status`)
   },
 
-  start(id: number): Promise<{ message: string }> {
-    return api.post(`/strategies/${id}/start`)
+  start(id: number, workerName?: string): Promise<{ message: string }> {
+    return api.post(`/strategies/${id}/start`, workerName ? { worker_name: workerName } : {})
   },
 
   stop(id: number): Promise<{ message: string }> {

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus, Trade } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import { tradeApi } from '@/api/trade'
+import { getWorkers, type WorkerInfo } from '@/api/worker'
 import StrategyForm from '@/components/StrategyForm.vue'
 import TradeTable from '@/components/TradeTable.vue'
 
@@ -15,6 +16,11 @@ const selectedId = ref<number | null>(null)
 const currentStrategy = ref<Strategy | null>(null)
 const recentTrades = ref<Trade[]>([])
 const tradesLoading = ref(false)
+
+// Worker 选择
+const workers = ref<WorkerInfo[]>([])
+const selectedWorker = ref<string>('')
+const startDialogVisible = ref(false)
 
 const selectedStrategy = computed(() => {
   if (selectedId.value === null) return null
@@ -113,8 +119,20 @@ async function handleSubmit(data: StrategyCreate) {
 async function handleStart() {
   if (!selectedStrategy.value) return
   try {
-    await strategyApi.start(selectedStrategy.value.id)
+    workers.value = await getWorkers()
+    selectedWorker.value = ''
+    startDialogVisible.value = true
+  } catch {
+    // 错误已在拦截器处理
+  }
+}
+
+async function confirmStart() {
+  if (!selectedStrategy.value) return
+  try {
+    await strategyApi.start(selectedStrategy.value.id, selectedWorker.value || undefined)
     ElMessage.success('策略已启动')
+    startDialogVisible.value = false
     fetchStatus(selectedStrategy.value.id)
   } catch {
     // 错误已在拦截器处理
@@ -233,5 +251,24 @@ onMounted(() => {
       :strategy="currentStrategy"
       @submit="handleSubmit"
     />
+
+    <el-dialog v-model="startDialogVisible" title="启动策略" width="400">
+      <el-form>
+        <el-form-item label="选择 Worker">
+          <el-select v-model="selectedWorker" placeholder="自动分配" clearable style="width: 100%">
+            <el-option
+              v-for="(w, idx) in workers"
+              :key="w.name"
+              :label="`${w.hostname} (#${idx + 1})`"
+              :value="w.name"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="startDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmStart">启动</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

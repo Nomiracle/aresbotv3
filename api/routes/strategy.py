@@ -239,9 +239,14 @@ async def delete_strategy(
     await StrategyCRUD.delete(session, strategy)
 
 
+class StartStrategyRequest(BaseModel):
+    worker_name: Optional[str] = None
+
+
 @router.post("/{strategy_id}/start", response_model=StrategyStatusResponse)
 async def start_strategy(
     strategy_id: int,
+    request: Optional[StartStrategyRequest] = None,
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
@@ -282,10 +287,12 @@ async def start_strategy(
     }
 
     # Submit Celery task
+    worker_name = request.worker_name if request else None
     task_id = send_run_strategy(
         strategy_id=strategy_id,
         account_data=account_data,
         strategy_config=strategy_config,
+        worker_name=worker_name,
     )
 
     return StrategyStatusResponse(
