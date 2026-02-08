@@ -1,8 +1,17 @@
 # AresBot V3 Web Dashboard Configuration
 
-# Database
+# Database - 支持两种配置方式
 database:
-  url: "mysql+aiomysql://user:pass@localhost/aresbot"
+  # 方式1: 分开配置（推荐，支持密码包含特殊字符）
+  host: "localhost"
+  port: 3306
+  user: "aresbot"
+  password: ""
+  name: "aresbot"
+
+  # 方式2: 完整 URL（优先级更高，会覆盖上面的配置）
+  # url: "mysql+aiomysql://user:password@host:port/database"
+
   pool_size: 5
   max_overflow: 10
 

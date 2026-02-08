@@ -1,6 +1,7 @@
 """AresBot V3 - Web Dashboard Entry Point."""
 import os
 import sys
+from urllib.parse import quote_plus
 
 # 将当前目录添加到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,25 @@ def load_config(config_path: str = "config.yaml") -> dict:
     return {}
 
 
+def build_db_url_from_config(db_config: dict) -> str:
+    """Build database URL from config, handling special characters in password."""
+    # 优先使用完整 URL
+    if db_config.get("url"):
+        return db_config["url"]
+
+    # 从分开的配置构建
+    host = db_config.get("host", "localhost")
+    port = db_config.get("port", 3306)
+    user = db_config.get("user", "aresbot")
+    password = db_config.get("password", "")
+    database = db_config.get("name", "aresbot")
+
+    # URL 编码密码
+    encoded_password = quote_plus(password) if password else ""
+
+    return f"mysql+aiomysql://{user}:{encoded_password}@{host}:{port}/{database}"
+
+
 def main():
     """Main entry point."""
     config = load_config()
@@ -39,7 +59,8 @@ def main():
     init_encryption(encryption_key)
 
     db_config = config.get("database", {})
-    database_url = db_config.get("url", "") or build_database_url()
+    # 优先从 config.yaml 构建，否则从环境变量构建
+    database_url = build_db_url_from_config(db_config) if db_config else build_database_url()
     if not database_url:
         print("Error: Database not configured")
         sys.exit(1)
