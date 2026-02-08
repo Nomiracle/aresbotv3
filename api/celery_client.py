@@ -29,18 +29,21 @@ TASK_RUN_STRATEGY = 'worker.tasks.strategy_task.run_strategy'
 
 def get_active_workers() -> List[Dict]:
     """Get list of active Celery workers with their info."""
+    from shared.core.redis_client import get_redis_client
+
     inspect = celery_app.control.inspect()
     ping_result = inspect.ping() or {}
     stats_result = inspect.stats() or {}
+    redis_client = get_redis_client()
 
     workers = []
     for worker_name, ping_data in ping_result.items():
         stats = stats_result.get(worker_name, {})
+        # 从 Redis 获取 worker 详细信息
+        worker_info = redis_client.get_worker_info(worker_name) or {}
         # worker_name format: worker@hostname
-        hostname = worker_name.split('@')[-1] if '@' in worker_name else worker_name
-        # 尝试从 broker 连接信息获取 IP
-        broker_info = stats.get('broker', {})
-        worker_ip = broker_info.get('hostname', '')
+        hostname = worker_info.get("hostname") or (worker_name.split('@')[-1] if '@' in worker_name else worker_name)
+        worker_ip = worker_info.get("ip", "")
         workers.append({
             'name': worker_name,
             'hostname': hostname,

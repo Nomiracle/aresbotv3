@@ -13,6 +13,7 @@ class RedisClient:
     RUNNING_KEY_PREFIX = "strategy:running:"
     LOCK_KEY_PREFIX = "strategy:lock:"
     WORKERS_KEY = "workers:active"
+    WORKER_INFO_PREFIX = "worker:info:"
 
     # TTL settings
     LOCK_TTL = 86400  # 24 hours
@@ -157,17 +158,51 @@ class RedisClient:
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
         return self._client.exists(key) > 0
 
-    def register_worker(self, worker_id: str) -> None:
-        """Register a worker as active."""
+    def register_worker(self, worker_id: str, ip: str = "", hostname: str = "") -> None:
+        """Register a worker as active with its info."""
         self._client.sadd(self.WORKERS_KEY, worker_id)
+        if ip or hostname:
+            key = f"{self.WORKER_INFO_PREFIX}{worker_id}"
+            self._client.hset(key, mapping={
+                "ip": ip,
+                "hostname": hostname,
+                "registered_at": int(time.time()),
+            })
+            self._client.expire(key, 86400)  # 24 hours TTL
 
     def unregister_worker(self, worker_id: str) -> None:
         """Unregister a worker."""
         self._client.srem(self.WORKERS_KEY, worker_id)
+        self._client.delete(f"{self.WORKER_INFO_PREFIX}{worker_id}")
+
+    def get_worker_info(self, worker_id: str) -> Optional[Dict]:
+        """Get worker info by ID."""
+        key = f"{self.WORKER_INFO_PREFIX}{worker_id}"
+        info = self._client.hgetall(key)
+        if not info:
+            return None
+        return {
+            "ip": info.get("ip", ""),
+            "hostname": info.get("hostname", ""),
+            "registered_at": int(info.get("registered_at", 0)),
+        }
 
     def get_active_workers(self) -> List[str]:
         """Get list of active workers."""
         return list(self._client.smembers(self.WORKERS_KEY))
+
+    def get_all_workers_info(self) -> List[Dict]:
+        """Get all active workers with their info."""
+        worker_ids = self.get_active_workers()
+        result = []
+        for worker_id in worker_ids:
+            info = self.get_worker_info(worker_id) or {}
+            result.append({
+                "name": worker_id,
+                "ip": info.get("ip", ""),
+                "hostname": info.get("hostname", worker_id.split("@")[-1] if "@" in worker_id else worker_id),
+            })
+        return result
 
     def ping(self) -> bool:
         """Check if Redis connection is alive."""
