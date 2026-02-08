@@ -7,7 +7,8 @@ import MonitorCard from '@/components/MonitorCard.vue'
 
 const strategies = ref<RunningStrategy[]>([])
 const statusMap = ref<Map<number, StrategyStatus>>(new Map())
-const loading = ref(false)
+const loading = ref(true)
+let isFetching = false
 let pollTimer: number | null = null
 
 // 只显示正在运行的策略
@@ -15,8 +16,18 @@ const runningStrategies = computed(() => {
   return strategies.value.filter(s => statusMap.value.has(s.strategy_id))
 })
 
-async function fetchStrategies() {
-  loading.value = true
+async function fetchStrategies(options: { showLoading?: boolean } = {}) {
+  const { showLoading = false } = options
+
+  if (isFetching) {
+    return
+  }
+
+  if (showLoading) {
+    loading.value = true
+  }
+
+  isFetching = true
   try {
     strategies.value = await strategyApi.getRunning()
     statusMap.value.clear()
@@ -37,13 +48,20 @@ async function fetchStrategies() {
       })
     })
   } finally {
-    loading.value = false
+    isFetching = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
 function startPolling() {
+  if (pollTimer !== null) {
+    return
+  }
+
   pollTimer = window.setInterval(() => {
-    fetchStrategies()
+    void fetchStrategies()
   }, 1000)
 }
 
@@ -58,7 +76,7 @@ async function handleStart(id: number) {
   try {
     await strategyApi.start(id)
     ElMessage.success('策略已启动')
-    fetchStrategies()
+    await fetchStrategies({ showLoading: true })
   } catch {
     // 错误已在拦截器处理
   }
@@ -68,7 +86,7 @@ async function handleStop(id: number) {
   try {
     await strategyApi.stop(id)
     ElMessage.success('策略已停止')
-    fetchStrategies()
+    await fetchStrategies({ showLoading: true })
   } catch {
     // 错误已在拦截器处理
   }
@@ -88,7 +106,7 @@ const monitorCardStrategy = computed(() => {
 })
 
 onMounted(async () => {
-  await fetchStrategies()
+  await fetchStrategies({ showLoading: true })
   startPolling()
 })
 
