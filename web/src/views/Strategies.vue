@@ -1,1 +1,305 @@
-[{"text": "<script setup lang=\"ts\">\nimport { ref, computed, onMounted, watch } from 'vue'\nimport { ElMessage, ElMessageBox } from 'element-plus'\nimport type { Strategy, StrategyCreate, StrategyStatus, Trade } from '@/types'\nimport { strategyApi } from '@/api/strategy'\nimport { tradeApi } from '@/api/trade'\nimport { getWorkers, type WorkerInfo } from '@/api/worker'\nimport StrategyForm from '@/components/StrategyForm.vue'\nimport TradeTable from '@/components/TradeTable.vue'\n\nconst strategies = ref<Strategy[]>([])\nconst statusMap = ref<Map<number, StrategyStatus>>(new Map())\nconst loading = ref(false)\nconst drawerVisible = ref(false)\nconst selectedIds = ref<number[]>([])\nconst currentStrategy = ref<Strategy | null>(null)\nconst recentTrades = ref<Trade[]>([])\nconst tradesLoading = ref(false)\nconst searchKeyword = ref('')\n\n// Worker \u9009\u62e9\nconst workers = ref<WorkerInfo[]>([])\nconst selectedWorker = ref<string>('')\nconst startDialogVisible = ref(false)\nconst startingStrategyId = ref<number | null>(null)\n\nconst filteredStrategies = computed(() => {\n  if (!searchKeyword.value) return strategies.value\n  const kw = searchKeyword.value.toLowerCase()\n  return strategies.value.filter(s => \n    s.name.toLowerCase().includes(kw) || \n    s.symbol.toLowerCase().includes(kw) ||\n    s.id.toString().includes(kw)\n  )\n})\n\nconst selectedStrategy = computed(() => {\n  if (selectedIds.value.length !== 1) return null\n  return strategies.value.find(s => s.id === selectedIds.value[0]) || null\n})\n\nconst selectedStatus = computed(() => {\n  if (!selectedStrategy.value) return null\n  return statusMap.value.get(selectedStrategy.value.id) || null\n})\n\nasync function fetchStrategies() {\n  loading.value = true\n  try {\n    strategies.value = await strategyApi.getAll()\n  } finally {\n    loading.value = false\n  }\n}\n\nasync function fetchStatus(id: number) {\n  try {\n    const status = await strategyApi.getStatus(id)\n    statusMap.value.set(id, status)\n  } catch {\n    // \u5ffd\u7565\u9519\u8bef\n  }\n}\n\nasync function fetchAllStatus() {\n  await Promise.all(strategies.value.map(s => fetchStatus(s.id)))\n}\n\nasync function fetchRecentTrades(strategyId: number) {\n  tradesLoading.value = true\n  try {\n    recentTrades.value = await tradeApi.getAll({ strategy_id: strategyId, limit: 10 })\n  } finally {\n    tradesLoading.value = false\n  }\n}\n\nwatch(() => selectedIds.value, (ids) => {\n  if (ids.length === 1) {\n    fetchStatus(ids[0])\n    fetchRecentTrades(ids[0])\n  }\n})\n\nfunction handleAdd() {\n  currentStrategy.value = null\n  drawerVisible.value = true\n}\n\nfunction handleEdit() {\n  currentStrategy.value = selectedStrategy.value\n  drawerVisible.value = true\n}\n\nasync function handleDelete() {\n  if (!selectedStrategy.value) return\n  try {\n    await ElMessageBox.confirm(`\u786e\u5b9a\u8981\u5220\u9664\u7b56\u7565 \"${selectedStrategy.value.name}\" \u5417\uff1f`, '\u5220\u9664\u786e\u8ba4', { type: 'warning' })\n    await strategyApi.delete(selectedStrategy.value.id)\n    ElMessage.success('\u5220\u9664\u6210\u529f')\n    selectedIds.value = []\n    fetchStrategies()\n  } catch {}\n}\n\nasync function handleSubmit(data: StrategyCreate) {\n  try {\n    if (currentStrategy.value) {\n      await strategyApi.update(currentStrategy.value.id, data)\n      ElMessage.success('\u66f4\u65b0\u6210\u529f')\n    } else {\n      const newStrategy = await strategyApi.create(data)\n      selectedIds.value = [newStrategy.id]\n      ElMessage.success('\u521b\u5efa\u6210\u529f')\n    }\n    fetchStrategies()\n  } catch {}\n}\n\nasync function handleStart() {\n  if (!selectedStrategy.value) return\n  try {\n    workers.value = await getWorkers()\n    selectedWorker.value = selectedStrategy.value.worker_name || ''\n    startingStrategyId.value = selectedStrategy.value.id\n    startDialogVisible.value = true\n  } catch {}\n}\n\nasync function confirmStart() {\n  if (!startingStrategyId.value) return\n  try {\n    await strategyApi.start(startingStrategyId.value, selectedWorker.value || undefined)\n    ElMessage.success('\u7b56\u7565\u5df2\u542f\u52a8')\n    startDialogVisible.value = false\n    fetchStatus(startingStrategyId.value)\n  } catch {}\n}\n\nasync function handleStop() {\n  if (!selectedStrategy.value) return\n  try {\n    await strategyApi.stop(selectedStrategy.value.id)\n    ElMessage.success('\u7b56\u7565\u5df2\u505c\u6b62')\n    fetchStatus(selectedStrategy.value.id)\n  } catch {}\n}\n\nasync function handleCopy() {\n  if (!selectedStrategy.value) return\n  try {\n    const newStrategy = await strategyApi.copy(selectedStrategy.value.id)\n    ElMessage.success('\u590d\u5236\u6210\u529f')\n    selectedIds.value = [newStrategy.id]\n    fetchStrategies()\n  } catch {}\n}\n\nasync function handleBatchStart() {\n  if (selectedIds.value.length === 0) return\n  try {\n    const result = await strategyApi.batchStart(selectedIds.value)\n    ElMessage.success(`\u542f\u52a8\u6210\u529f: ${result.success.length}, \u5931\u8d25: ${result.failed.length}`)\n    fetchAllStatus()\n  } catch {}\n}\n\nasync function handleBatchStop() {\n  if (selectedIds.value.length === 0) return\n  try {\n    const result = await strategyApi.batchStop(selectedIds.value)\n    ElMessage.success(`\u505c\u6b62\u6210\u529f: ${result.success.length}, \u5931\u8d25: ${result.failed.length}`)\n    fetchAllStatus()\n  } catch {}\n}\n\nasync function handleBatchDelete() {\n  if (selectedIds.value.length === 0) return\n  try {\n    await ElMessageBox.confirm(`\u786e\u5b9a\u8981\u5220\u9664\u9009\u4e2d\u7684 ${selectedIds.value.length} \u4e2a\u7b56\u7565\u5417\uff1f`, '\u6279\u91cf\u5220\u9664', { type: 'warning' })\n    const result = await strategyApi.batchDelete(selectedIds.value)\n    ElMessage.success(`\u5220\u9664\u6210\u529f: ${result.success.length}, \u5931\u8d25: ${result.failed.length}`)\n    selectedIds.value = []\n    fetchStrategies()\n  } catch {}\n}\n\nfunction getStatusType(id: number) {\n  const status = statusMap.value.get(id)\n  return status?.is_running ? 'success' : 'danger'\n}\n\nfunction getStatusText(id: number) {\n  const status = statusMap.value.get(id)\n  return status?.is_running ? '\u8fd0\u884c\u4e2d' : '\u5df2\u505c\u6b62'\n}\n\nonMounted(() => {\n  fetchStrategies().then(() => fetchAllStatus())\n})\n</script>\n\n<template>\n  <div>\n    <div class=\"page-header\">\n      <el-row justify=\"space-between\" align=\"middle\">\n        <h2>\u7b56\u7565\u7ba1\u7406</h2>\n        <el-space>\n          <el-input v-model=\"searchKeyword\" placeholder=\"\u641c\u7d22\u7b56\u7565\" clearable style=\"width: 200px\" />\n          <el-button type=\"primary\" @click=\"handleAdd\">\u65b0\u5efa</el-button>\n        </el-space>\n      </el-row>\n    </div>\n\n    <el-card>\n      <div style=\"margin-bottom: 12px;\">\n        <el-space>\n          <el-button size=\"small\" @click=\"handleBatchStart\" :disabled=\"selectedIds.length === 0\">\u6279\u91cf\u542f\u52a8</el-button>\n          <el-button size=\"small\" @click=\"handleBatchStop\" :disabled=\"selectedIds.length === 0\">\u6279\u91cf\u505c\u6b62</el-button>\n          <el-button size=\"small\" type=\"danger\" @click=\"handleBatchDelete\" :disabled=\"selectedIds.length === 0\">\u6279\u91cf\u5220\u9664</el-button>\n          <span style=\"color: #909399; font-size: 12px;\">\u5df2\u9009: {{ selectedIds.length }}</span>\n        </el-space>\n      </div>\n\n      <el-row :gutter=\"16\" style=\"height: 500px;\">\n        <el-col :span=\"10\">\n          <el-table\n            :data=\"filteredStrategies\"\n            v-loading=\"loading\"\n            size=\"small\"\n            height=\"100%\"\n            @selection-change=\"(rows: Strategy[]) => selectedIds = rows.map(r => r.id)\"\n            highlight-current-row\n          >\n            <el-table-column type=\"selection\" width=\"40\" />\n            <el-table-column label=\"#\" width=\"50\">\n              <template #default=\"{ $index }\">{{ $index + 1 }}</template>\n            </el-table-column>\n            <el-table-column prop=\"name\" label=\"\u540d\u79f0\" min-width=\"100\" />\n            <el-table-column prop=\"symbol\" label=\"\u4ea4\u6613\u5bf9\" width=\"100\" />\n            <el-table-column label=\"\u72b6\u6001\" width=\"70\">\n              <template #default=\"{ row }\">\n                <el-tag :type=\"getStatusType(row.id)\" size=\"small\">{{ getStatusText(row.id) }}</el-tag>\n              </template>\n            </el-table-column>\n          </el-table>\n        </el-col>\n\n        <el-col :span=\"14\">\n          <div v-if=\"selectedStrategy\" class=\"detail-panel\">\n            <el-descriptions :column=\"2\" size=\"small\" border>\n              <el-descriptions-item label=\"ID\">{{ selectedStrategy.id }}</el-descriptions-item>\n              <el-descriptions-item label=\"\u4ea4\u6613\u5bf9\">{{ selectedStrategy.symbol }}</el-descriptions-item>\n              <el-descriptions-item label=\"\u8ba2\u5355\u91cf\">{{ selectedStrategy.base_order_size }}</el-descriptions-item>\n              <el-descriptions-item label=\"\u7f51\u683c\">{{ selectedStrategy.grid_levels }}\u5c42</el-descriptions-item>\n              <el-descriptions-item label=\"\u4e70\u5165\u504f\u5dee\">{{ selectedStrategy.buy_price_deviation }}%</el-descriptions-item>\n              <el-descriptions-item label=\"\u5356\u51fa\u504f\u5dee\">{{ selectedStrategy.sell_price_deviation }}%</el-descriptions-item>\n              <el-descriptions-item label=\"\u8f6e\u8be2\u95f4\u9694\">{{ selectedStrategy.polling_interval }}s</el-descriptions-item>\n              <el-descriptions-item label=\"\u6700\u5927\u6301\u4ed3\">{{ selectedStrategy.max_open_positions }}</el-descriptions-item>\n              <el-descriptions-item label=\"Worker\">{{ selectedStrategy.worker_name || '\u81ea\u52a8' }}</el-descriptions-item>\n              <el-descriptions-item label=\"\u6b62\u635f\">{{ selectedStrategy.stop_loss || '-' }}</el-descriptions-item>\n            </el-descriptions>\n\n            <div style=\"margin-top: 12px;\">\n              <el-space>\n                <el-button size=\"small\" @click=\"handleEdit\">\u7f16\u8f91</el-button>\n                <el-button size=\"small\" @click=\"handleCopy\">\u590d\u5236</el-button>\n                <el-button v-if=\"!selectedStatus?.is_running\" size=\"small\" type=\"success\" @click=\"handleStart\">\u542f\u52a8</el-button>\n                <el-button v-if=\"selectedStatus?.is_running\" size=\"small\" type=\"warning\" @click=\"handleStop\">\u505c\u6b62</el-button>\n                <el-button size=\"small\" type=\"danger\" @click=\"handleDelete\">\u5220\u9664</el-button>\n              </el-space>\n            </div>\n\n            <el-divider content-position=\"left\">\u6700\u8fd1\u4ea4\u6613</el-divider>\n            <TradeTable :trades=\"recentTrades\" :loading=\"tradesLoading\" />\n          </div>\n          <el-empty v-else description=\"\u8bf7\u9009\u62e9\u4e00\u4e2a\u7b56\u7565\" />\n        </el-col>\n      </el-row>\n    </el-card>\n\n    <StrategyForm v-model:visible=\"drawerVisible\" :strategy=\"currentStrategy\" @submit=\"handleSubmit\" />\n\n    <el-dialog v-model=\"startDialogVisible\" title=\"\u542f\u52a8\u7b56\u7565\" width=\"400\">\n      <el-form>\n        <el-form-item label=\"\u9009\u62e9 Worker\">\n          <el-select v-model=\"selectedWorker\" placeholder=\"\u81ea\u52a8\u5206\u914d\" clearable style=\"width: 100%\">\n            <el-option v-for=\"(w, idx) in workers\" :key=\"w.name\" :label=\"`${w.hostname} (#${idx + 1})`\" :value=\"w.name\" />\n          </el-select>\n        </el-form-item>\n      </el-form>\n      <template #footer>\n        <el-button @click=\"startDialogVisible = false\">\u53d6\u6d88</el-button>\n        <el-button type=\"primary\" @click=\"confirmStart\">\u542f\u52a8</el-button>\n      </template>\n    </el-dialog>\n  </div>\n</template>\n\n<style scoped>\n.detail-panel {\n  height: 100%;\n  overflow-y: auto;\n}\n</style>\n", "type": "text"}]
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import type { Strategy, StrategyCreate, StrategyStatus, Trade } from '@/types'
+import { strategyApi } from '@/api/strategy'
+import { tradeApi } from '@/api/trade'
+import { getWorkers, type WorkerInfo } from '@/api/worker'
+import StrategyForm from '@/components/StrategyForm.vue'
+import TradeTable from '@/components/TradeTable.vue'
+
+const strategies = ref<Strategy[]>([])
+const statusMap = ref<Map<number, StrategyStatus>>(new Map())
+const loading = ref(false)
+const drawerVisible = ref(false)
+const selectedIds = ref<number[]>([])
+const currentStrategy = ref<Strategy | null>(null)
+const recentTrades = ref<Trade[]>([])
+const tradesLoading = ref(false)
+const searchKeyword = ref('')
+
+// Worker 选择
+const workers = ref<WorkerInfo[]>([])
+const selectedWorker = ref<string>('')
+const startDialogVisible = ref(false)
+const startingStrategyId = ref<number | null>(null)
+
+const filteredStrategies = computed(() => {
+  if (!searchKeyword.value) return strategies.value
+  const kw = searchKeyword.value.toLowerCase()
+  return strategies.value.filter(s =>
+    s.name.toLowerCase().includes(kw) ||
+    s.symbol.toLowerCase().includes(kw) ||
+    s.id.toString().includes(kw)
+  )
+})
+
+const selectedStrategy = computed(() => {
+  if (selectedIds.value.length !== 1) return null
+  return strategies.value.find(s => s.id === selectedIds.value[0]) || null
+})
+
+const selectedStatus = computed(() => {
+  if (!selectedStrategy.value) return null
+  return statusMap.value.get(selectedStrategy.value.id) || null
+})
+
+async function fetchStrategies() {
+  loading.value = true
+  try {
+    strategies.value = await strategyApi.getAll()
+  } finally {
+    loading.value = false
+  }
+}
+
+async function fetchStatus(id: number) {
+  try {
+    const status = await strategyApi.getStatus(id)
+    statusMap.value.set(id, status)
+  } catch {
+    // 忽略错误
+  }
+}
+
+async function fetchAllStatus() {
+  await Promise.all(strategies.value.map(s => fetchStatus(s.id)))
+}
+
+async function fetchRecentTrades(strategyId: number) {
+  tradesLoading.value = true
+  try {
+    recentTrades.value = await tradeApi.getAll({ strategy_id: strategyId, limit: 10 })
+  } finally {
+    tradesLoading.value = false
+  }
+}
+
+watch(() => selectedIds.value, (ids) => {
+  if (ids.length === 1) {
+    fetchStatus(ids[0])
+    fetchRecentTrades(ids[0])
+  }
+})
+
+function handleAdd() {
+  currentStrategy.value = null
+  drawerVisible.value = true
+}
+
+function handleEdit() {
+  currentStrategy.value = selectedStrategy.value
+  drawerVisible.value = true
+}
+
+async function handleDelete() {
+  if (!selectedStrategy.value) return
+  try {
+    await ElMessageBox.confirm(`确定要删除策略 "${selectedStrategy.value.name}" 吗？`, '删除确认', { type: 'warning' })
+    await strategyApi.delete(selectedStrategy.value.id)
+    ElMessage.success('删除成功')
+    selectedIds.value = []
+    fetchStrategies()
+  } catch {}
+}
+
+async function handleSubmit(data: StrategyCreate) {
+  try {
+    if (currentStrategy.value) {
+      await strategyApi.update(currentStrategy.value.id, data)
+      ElMessage.success('更新成功')
+    } else {
+      const newStrategy = await strategyApi.create(data)
+      selectedIds.value = [newStrategy.id]
+      ElMessage.success('创建成功')
+    }
+    fetchStrategies()
+  } catch {}
+}
+
+async function handleStart() {
+  if (!selectedStrategy.value) return
+  try {
+    workers.value = await getWorkers()
+    selectedWorker.value = selectedStrategy.value.worker_name || ''
+    startingStrategyId.value = selectedStrategy.value.id
+    startDialogVisible.value = true
+  } catch {}
+}
+
+async function confirmStart() {
+  if (!startingStrategyId.value) return
+  try {
+    await strategyApi.start(startingStrategyId.value, selectedWorker.value || undefined)
+    ElMessage.success('策略已启动')
+    startDialogVisible.value = false
+    fetchStatus(startingStrategyId.value)
+  } catch {}
+}
+
+async function handleStop() {
+  if (!selectedStrategy.value) return
+  try {
+    await strategyApi.stop(selectedStrategy.value.id)
+    ElMessage.success('策略已停止')
+    fetchStatus(selectedStrategy.value.id)
+  } catch {}
+}
+
+async function handleCopy() {
+  if (!selectedStrategy.value) return
+  try {
+    const newStrategy = await strategyApi.copy(selectedStrategy.value.id)
+    ElMessage.success('复制成功')
+    selectedIds.value = [newStrategy.id]
+    fetchStrategies()
+  } catch {}
+}
+
+async function handleBatchStart() {
+  if (selectedIds.value.length === 0) return
+  try {
+    const result = await strategyApi.batchStart(selectedIds.value)
+    ElMessage.success(`启动成功: ${result.success.length}, 失败: ${result.failed.length}`)
+    fetchAllStatus()
+  } catch {}
+}
+
+async function handleBatchStop() {
+  if (selectedIds.value.length === 0) return
+  try {
+    const result = await strategyApi.batchStop(selectedIds.value)
+    ElMessage.success(`停止成功: ${result.success.length}, 失败: ${result.failed.length}`)
+    fetchAllStatus()
+  } catch {}
+}
+
+async function handleBatchDelete() {
+  if (selectedIds.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(`确定要删除选中的 ${selectedIds.value.length} 个策略吗？`, '批量删除', { type: 'warning' })
+    const result = await strategyApi.batchDelete(selectedIds.value)
+    ElMessage.success(`删除成功: ${result.success.length}, 失败: ${result.failed.length}`)
+    selectedIds.value = []
+    fetchStrategies()
+  } catch {}
+}
+
+function getStatusType(id: number) {
+  const status = statusMap.value.get(id)
+  return status?.is_running ? 'success' : 'danger'
+}
+
+function getStatusText(id: number) {
+  const status = statusMap.value.get(id)
+  return status?.is_running ? '运行中' : '已停止'
+}
+
+onMounted(() => {
+  fetchStrategies().then(() => fetchAllStatus())
+})
+</script>
+
+<template>
+  <div>
+    <div class="page-header">
+      <el-row justify="space-between" align="middle">
+        <h2>策略管理</h2>
+        <el-space>
+          <el-input v-model="searchKeyword" placeholder="搜索策略" clearable style="width: 200px" />
+          <el-button type="primary" @click="handleAdd">新建</el-button>
+        </el-space>
+      </el-row>
+    </div>
+
+    <el-card>
+      <div style="margin-bottom: 12px;">
+        <el-space>
+          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStart">批量启动</el-button>
+          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStop">批量停止</el-button>
+          <el-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</el-button>
+          <span style="color: #909399; font-size: 12px;">已选: {{ selectedIds.length }}</span>
+        </el-space>
+      </div>
+
+      <el-row :gutter="16" style="height: 500px;">
+        <el-col :span="10">
+          <el-table
+            :data="filteredStrategies"
+            v-loading="loading"
+            size="small"
+            height="100%"
+            highlight-current-row
+            @selection-change="(rows: Strategy[]) => selectedIds = rows.map(r => r.id)"
+          >
+            <el-table-column type="selection" width="40" />
+            <el-table-column label="#" width="50">
+              <template #default="{ $index }">{{ $index + 1 }}</template>
+            </el-table-column>
+            <el-table-column prop="name" label="名称" min-width="100" />
+            <el-table-column prop="symbol" label="交易对" width="100" />
+            <el-table-column label="状态" width="70">
+              <template #default="{ row }">
+                <el-tag :type="getStatusType(row.id)" size="small">{{ getStatusText(row.id) }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-col>
+
+        <el-col :span="14">
+          <div v-if="selectedStrategy" class="detail-panel">
+            <el-descriptions :column="2" size="small" border>
+              <el-descriptions-item label="ID">{{ selectedStrategy.id }}</el-descriptions-item>
+              <el-descriptions-item label="交易对">{{ selectedStrategy.symbol }}</el-descriptions-item>
+              <el-descriptions-item label="订单量">{{ selectedStrategy.base_order_size }}</el-descriptions-item>
+              <el-descriptions-item label="网格">{{ selectedStrategy.grid_levels }}层</el-descriptions-item>
+              <el-descriptions-item label="买入偏差">{{ selectedStrategy.buy_price_deviation }}%</el-descriptions-item>
+              <el-descriptions-item label="卖出偏差">{{ selectedStrategy.sell_price_deviation }}%</el-descriptions-item>
+              <el-descriptions-item label="轮询间隔">{{ selectedStrategy.polling_interval }}s</el-descriptions-item>
+              <el-descriptions-item label="最大持仓">{{ selectedStrategy.max_open_positions }}</el-descriptions-item>
+              <el-descriptions-item label="Worker">{{ selectedStrategy.worker_name || '自动' }}</el-descriptions-item>
+              <el-descriptions-item label="止损">{{ selectedStrategy.stop_loss || '-' }}</el-descriptions-item>
+            </el-descriptions>
+
+            <div style="margin-top: 12px;">
+              <el-space>
+                <el-button size="small" @click="handleEdit">编辑</el-button>
+                <el-button size="small" @click="handleCopy">复制</el-button>
+                <el-button v-if="!selectedStatus?.is_running" size="small" type="success" @click="handleStart">启动</el-button>
+                <el-button v-if="selectedStatus?.is_running" size="small" type="warning" @click="handleStop">停止</el-button>
+                <el-button size="small" type="danger" @click="handleDelete">删除</el-button>
+              </el-space>
+            </div>
+
+            <el-divider content-position="left">最近交易</el-divider>
+            <TradeTable :trades="recentTrades" :loading="tradesLoading" />
+          </div>
+          <el-empty v-else description="请选择一个策略" />
+        </el-col>
+      </el-row>
+    </el-card>
+
+    <StrategyForm v-model:visible="drawerVisible" :strategy="currentStrategy" @submit="handleSubmit" />
+
+    <el-dialog v-model="startDialogVisible" title="启动策略" width="400">
+      <el-form>
+        <el-form-item label="选择 Worker">
+          <el-select v-model="selectedWorker" placeholder="自动分配" clearable style="width: 100%">
+            <el-option v-for="(w, idx) in workers" :key="w.name" :label="`${w.hostname} (#${idx + 1})`" :value="w.name" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="startDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmStart">启动</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.detail-panel {
+  height: 100%;
+  overflow-y: auto;
+}
+</style>
