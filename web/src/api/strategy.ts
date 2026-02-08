@@ -1,6 +1,11 @@
 import api from './index'
 import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
 
+interface BatchResult {
+  success: number[]
+  failed: number[]
+}
+
 export const strategyApi = {
   getAll(): Promise<Strategy[]> {
     return api.get('/strategies')
@@ -32,5 +37,21 @@ export const strategyApi = {
 
   stop(id: number): Promise<{ message: string }> {
     return api.post(`/strategies/${id}/stop`)
+  },
+
+  copy(id: number): Promise<Strategy> {
+    return api.post(`/strategies/${id}/copy`)
+  },
+
+  batchStart(ids: number[]): Promise<BatchResult> {
+    return api.post('/strategies/batch/start', { strategy_ids: ids })
+  },
+
+  batchStop(ids: number[]): Promise<BatchResult> {
+    return api.post('/strategies/batch/stop', { strategy_ids: ids })
+  },
+
+  batchDelete(ids: number[]): Promise<BatchResult> {
+    return api.post('/strategies/batch/delete', { strategy_ids: ids })
   },
 }

@@ -53,6 +53,9 @@ class Strategy(SQLModel, table=True):
         default=None, max_digits=20, decimal_places=8
     )
 
+    # Worker settings
+    worker_name: Optional[str] = Field(default=None, max_length=100)
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

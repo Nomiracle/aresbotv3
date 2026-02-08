@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS strategy (
     stop_loss_delay INT DEFAULT NULL,
     max_open_positions INT NOT NULL DEFAULT 10,
     max_daily_drawdown DECIMAL(20, 8) DEFAULT NULL,
+    worker_name VARCHAR(100) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_email (user_email),

@@ -3,6 +3,7 @@ import { ref, reactive, watch, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Strategy, StrategyCreate, Account } from '@/types'
 import { accountApi } from '@/api/account'
+import { getWorkers, type WorkerInfo } from '@/api/worker'
 
 const props = defineProps<{
   visible: boolean
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 
 const formRef = ref<FormInstance>()
 const accounts = ref<Account[]>([])
+const workers = ref<WorkerInfo[]>([])
 
 const defaultForm: StrategyCreate = {
   account_id: 0,
@@ -31,6 +33,7 @@ const defaultForm: StrategyCreate = {
   stop_loss_delay: null,
   max_open_positions: 10,
   max_daily_drawdown: null,
+  worker_name: null,
 }
 
 const form = reactive<StrategyCreate>({ ...defaultForm })
@@ -49,9 +52,18 @@ async function fetchAccounts() {
   accounts.value = await accountApi.getAll()
 }
 
+async function fetchWorkers() {
+  try {
+    workers.value = await getWorkers()
+  } catch {
+    workers.value = []
+  }
+}
+
 watch(() => props.visible, (val) => {
   if (val) {
     fetchAccounts()
+    fetchWorkers()
     if (props.strategy) {
       Object.assign(form, {
         account_id: props.strategy.account_id,
@@ -67,6 +79,7 @@ watch(() => props.visible, (val) => {
         stop_loss_delay: props.strategy.stop_loss_delay,
         max_open_positions: props.strategy.max_open_positions,
         max_daily_drawdown: props.strategy.max_daily_drawdown,
+        worker_name: props.strategy.worker_name,
       })
     } else {
       Object.assign(form, defaultForm)
@@ -88,6 +101,7 @@ async function handleSubmit() {
 
 onMounted(() => {
   fetchAccounts()
+  fetchWorkers()
 })
 </script>
 
@@ -146,6 +160,11 @@ onMounted(() => {
       </el-form-item>
       <el-form-item label="日最大回撤 %">
         <el-input v-model="form.max_daily_drawdown" placeholder="留空表示不设置" />
+      </el-form-item>
+      <el-form-item label="指定 Worker">
+        <el-select v-model="form.worker_name" placeholder="自动分配" clearable style="width: 100%">
+          <el-option v-for="(w, idx) in workers" :key="w.name" :label="`${w.hostname} (#${idx + 1})`" :value="w.name" />
+        </el-select>
       </el-form-item>
     </el-form>
     <template #footer>

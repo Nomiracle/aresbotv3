@@ -29,6 +29,7 @@ class StrategyCreate(BaseModel):
     stop_loss_delay: Optional[int] = None
     max_open_positions: int = 10
     max_daily_drawdown: Optional[Decimal] = None
+    worker_name: Optional[str] = None
 
 
 class StrategyUpdate(BaseModel):
@@ -44,6 +45,7 @@ class StrategyUpdate(BaseModel):
     stop_loss_delay: Optional[int] = None
     max_open_positions: Optional[int] = None
     max_daily_drawdown: Optional[Decimal] = None
+    worker_name: Optional[str] = None
 
 
 class StrategyResponse(BaseModel):
@@ -61,6 +63,7 @@ class StrategyResponse(BaseModel):
     stop_loss_delay: Optional[int]
     max_open_positions: int
     max_daily_drawdown: Optional[Decimal]
+    worker_name: Optional[str]
     created_at: str
     updated_at: str
 
@@ -111,6 +114,7 @@ def strategy_to_response(strategy: Strategy) -> StrategyResponse:
         stop_loss_delay=strategy.stop_loss_delay,
         max_open_positions=strategy.max_open_positions,
         max_daily_drawdown=strategy.max_daily_drawdown,
+        worker_name=strategy.worker_name,
         created_at=strategy.created_at.isoformat(),
         updated_at=strategy.updated_at.isoformat(),
     )
@@ -157,6 +161,7 @@ async def create_strategy(
         stop_loss_delay=data.stop_loss_delay,
         max_open_positions=data.max_open_positions,
         max_daily_drawdown=data.max_daily_drawdown,
+        worker_name=data.worker_name,
     )
     return strategy_to_response(strategy)
 
@@ -286,8 +291,8 @@ async def start_strategy(
         "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
     }
 
-    # Submit Celery task
-    worker_name = request.worker_name if request else None
+    # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
+    worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
     task_id = send_run_strategy(
         strategy_id=strategy_id,
         account_data=account_data,
@@ -362,3 +367,133 @@ async def get_strategy_status(
         started_at=info.get("started_at"),
         updated_at=info.get("updated_at"),
     )
+
+
+class BatchRequest(BaseModel):
+    strategy_ids: List[int]
+
+
+class BatchResult(BaseModel):
+    success: List[int]
+    failed: List[int]
+
+
+@router.post("/batch/start", response_model=BatchResult)
+async def batch_start_strategies(
+    data: BatchRequest,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Batch start multiple strategies."""
+    success, failed = [], []
+    for sid in data.strategy_ids:
+        try:
+            strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
+            if not strategy:
+                failed.append(sid)
+                continue
+            account = await AccountCRUD.get_by_id(session, strategy.account_id, user_email)
+            if not account or not account.is_active or _is_strategy_running(sid):
+                failed.append(sid)
+                continue
+            account_data = {"api_key": account.api_key, "api_secret": account.api_secret, "testnet": account.testnet}
+            strategy_config = {
+                "symbol": strategy.symbol,
+                "base_order_size": str(strategy.base_order_size),
+                "buy_price_deviation": str(strategy.buy_price_deviation),
+                "sell_price_deviation": str(strategy.sell_price_deviation),
+                "grid_levels": strategy.grid_levels,
+                "polling_interval": str(strategy.polling_interval),
+                "price_tolerance": str(strategy.price_tolerance),
+                "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
+                "stop_loss_delay": strategy.stop_loss_delay,
+                "max_open_positions": strategy.max_open_positions,
+                "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+            }
+            send_run_strategy(sid, account_data, strategy_config, strategy.worker_name)
+            success.append(sid)
+        except Exception:
+            failed.append(sid)
+    return BatchResult(success=success, failed=failed)
+
+
+@router.post("/batch/stop", response_model=BatchResult)
+async def batch_stop_strategies(
+    data: BatchRequest,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Batch stop multiple strategies."""
+    success, failed = [], []
+    redis_client = get_redis_client()
+    for sid in data.strategy_ids:
+        try:
+            strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
+            if not strategy:
+                failed.append(sid)
+                continue
+            info = redis_client.get_running_info(sid)
+            if not info:
+                failed.append(sid)
+                continue
+            task_id = info.get("task_id")
+            if task_id:
+                revoke_task(task_id)
+            redis_client.update_running_status(strategy_id=sid, status="stopping")
+            success.append(sid)
+        except Exception:
+            failed.append(sid)
+    return BatchResult(success=success, failed=failed)
+
+
+@router.post("/batch/delete", response_model=BatchResult)
+async def batch_delete_strategies(
+    data: BatchRequest,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Batch delete multiple strategies."""
+    success, failed = [], []
+    for sid in data.strategy_ids:
+        try:
+            strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
+            if not strategy or _is_strategy_running(sid):
+                failed.append(sid)
+                continue
+            await StrategyCRUD.delete(session, strategy)
+            success.append(sid)
+        except Exception:
+            failed.append(sid)
+    return BatchResult(success=success, failed=failed)
+
+
+@router.post("/{strategy_id}/copy", response_model=StrategyResponse)
+async def copy_strategy(
+    strategy_id: int,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Copy a strategy."""
+    strategy = await StrategyCRUD.get_by_id(session, strategy_id, user_email)
+    if not strategy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
+
+    new_strategy = await StrategyCRUD.create(
+        session,
+        user_email=user_email,
+        account_id=strategy.account_id,
+        name=f"{strategy.name} (副本)",
+        symbol=strategy.symbol,
+        base_order_size=strategy.base_order_size,
+        buy_price_deviation=strategy.buy_price_deviation,
+        sell_price_deviation=strategy.sell_price_deviation,
+        grid_levels=strategy.grid_levels,
+        polling_interval=strategy.polling_interval,
+        price_tolerance=strategy.price_tolerance,
+        stop_loss=strategy.stop_loss,
+        stop_loss_delay=strategy.stop_loss_delay,
+        max_open_positions=strategy.max_open_positions,
+        max_daily_drawdown=strategy.max_daily_drawdown,
+        worker_name=strategy.worker_name,
+    )
+    return strategy_to_response(new_strategy)

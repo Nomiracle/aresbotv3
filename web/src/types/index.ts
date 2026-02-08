@@ -31,6 +31,7 @@ export interface Strategy {
   stop_loss_delay: number | null
   max_open_positions: number
   max_daily_drawdown: string | null
+  worker_name: string | null
   created_at: string
   updated_at: string
 }
@@ -49,6 +50,7 @@ export interface StrategyCreate {
   stop_loss_delay?: number | null
   max_open_positions?: number
   max_daily_drawdown?: string | null
+  worker_name?: string | null
 }
 
 export interface StrategyStatus {

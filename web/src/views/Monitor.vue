@@ -22,9 +22,13 @@ async function fetchStrategies() {
 async function fetchStatus(id: number) {
   try {
     const status = await strategyApi.getStatus(id)
-    statusMap.value.set(id, status)
+    if (status.is_running) {
+      statusMap.value.set(id, status)
+    } else {
+      statusMap.value.delete(id)
+    }
   } catch {
-    // 忽略单个策略状态获取错误
+    statusMap.value.delete(id)
   }
 }
 
