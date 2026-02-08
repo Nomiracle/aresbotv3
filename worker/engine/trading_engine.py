@@ -85,7 +85,7 @@ class TradingEngine:
                 logger.debug("主循环开始 #%s symbol=%s", loop_index, self.strategy.config.symbol)
                 self._fetch_price()
 
-                if self._current_price is None:
+                if self._current_price is None or self._current_price <= 0:
                     logger.debug("主循环等待价格 #%s", loop_index)
                     self._update_status(force=True, source="loop_no_price")
                     time.sleep(0.1)
@@ -113,7 +113,7 @@ class TradingEngine:
                     time.time() - loop_started_at,
                 )
 
-                time.sleep(self.strategy.config.interval)
+                time.sleep(max(float(self.strategy.config.interval), 0.1))
 
             except Exception as e:
                 logger.exception("主循环异常 #%s: %s", loop_index, e)
@@ -127,7 +127,7 @@ class TradingEngine:
         """获取当前价格"""
         try:
             price = self.exchange.get_ticker_price()
-            if price and price > 0:
+            if isinstance(price, (int, float)) and price > 0:
                 self._current_price = price
         except Exception as e:
             logger.warning(f"获取价格失败: {e}")
