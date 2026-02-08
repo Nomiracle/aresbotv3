@@ -1,9 +1,32 @@
 """Database connection and session management."""
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from urllib.parse import quote_plus
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlmodel import SQLModel
+
+
+def build_database_url() -> str:
+    """Build database URL from environment variables, handling special characters."""
+    # 优先使用完整的 DATABASE_URL
+    database_url = os.environ.get("DATABASE_URL", "")
+    if database_url:
+        return database_url
+
+    # 否则从分开的环境变量构建
+    host = os.environ.get("DB_HOST", "localhost")
+    port = os.environ.get("DB_PORT", "3306")
+    user = os.environ.get("DB_USER", "aresbot")
+    password = os.environ.get("DB_PASSWORD", "")
+    database = os.environ.get("DB_NAME", "aresbot")
+
+    # URL 编码密码中的特殊字符
+    encoded_password = quote_plus(password) if password else ""
+
+    return f"mysql+aiomysql://{user}:{encoded_password}@{host}:{port}/{database}"
+
 
 # Global engine and session maker
 _engine = None
@@ -87,12 +110,11 @@ def init_db_sync() -> None:
     Synchronous database initialization for Docker container startup.
     Creates all tables using synchronous SQLAlchemy engine.
     """
-    import os
     from sqlalchemy import create_engine
 
-    database_url = os.environ.get("DATABASE_URL", "")
+    database_url = build_database_url()
     if not database_url:
-        raise RuntimeError("DATABASE_URL environment variable not set")
+        raise RuntimeError("Database configuration not set")
 
     # Convert async URL to sync URL if needed
     sync_url = database_url.replace("+aiomysql", "+pymysql").replace("+asyncpg", "")

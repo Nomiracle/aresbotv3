@@ -11,7 +11,11 @@ services:
     ports:
       - "${API_PORT:-48000}:8000"
     environment:
-      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-aresbot}:${MYSQL_PASSWORD:-aresbot}@mysql:3306/${MYSQL_DATABASE:-aresbot}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${MYSQL_USER:-aresbot}
+      - DB_PASSWORD=${MYSQL_PASSWORD:-aresbot}
+      - DB_NAME=${MYSQL_DATABASE:-aresbot}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -31,7 +35,11 @@ services:
     build: .
     command: celery -A celery_app worker --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${CELERY_CONCURRENCY:-4} --hostname=worker@%h
     environment:
-      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-aresbot}:${MYSQL_PASSWORD:-aresbot}@mysql:3306/${MYSQL_DATABASE:-aresbot}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${MYSQL_USER:-aresbot}
+      - DB_PASSWORD=${MYSQL_PASSWORD:-aresbot}
+      - DB_NAME=${MYSQL_DATABASE:-aresbot}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - REDIS_HOST=redis
       - REDIS_PORT=6379

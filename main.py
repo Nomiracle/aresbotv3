@@ -9,7 +9,7 @@ import uvicorn
 import yaml
 
 from api.app import create_app
-from db.database import init_db
+from db.database import init_db, build_database_url
 from utils.crypto import init_encryption
 from utils.logger import setup_logger
 
@@ -39,9 +39,9 @@ def main():
     init_encryption(encryption_key)
 
     db_config = config.get("database", {})
-    database_url = db_config.get("url", "") or os.environ.get("DATABASE_URL", "")
+    database_url = db_config.get("url", "") or build_database_url()
     if not database_url:
-        print("Error: DATABASE_URL not configured")
+        print("Error: Database not configured")
         sys.exit(1)
 
     init_db(
