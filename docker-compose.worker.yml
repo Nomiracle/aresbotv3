@@ -2,12 +2,16 @@
 # 连接主节点的 MySQL 和 Redis
 
 services:
-  aresv3-worker:
+  worker:
     build: .
     command: celery -A celery_app worker --loglevel=${CELERY_LOG_LEVEL:-info} --concurrency=${CELERY_CONCURRENCY:-4} --hostname=worker@%h
     environment:
       # 连接主节点的 MySQL
-      - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-aresbot}:${MYSQL_PASSWORD:-aresbot}@${MASTER_HOST}:${MASTER_MYSQL_PORT:-43306}/${MYSQL_DATABASE:-aresbot}
+      - DB_HOST=${MASTER_HOST}
+      - DB_PORT=${MASTER_MYSQL_PORT:-43306}
+      - DB_USER=${MYSQL_USER:-aresbot}
+      - DB_PASSWORD=${MYSQL_PASSWORD:-aresbot}
+      - DB_NAME=${MYSQL_DATABASE:-aresbot}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       # 连接主节点的 Redis
       - REDIS_HOST=${MASTER_HOST}
