@@ -122,6 +122,16 @@ def on_worker_process_init(**kwargs):
     """Apply logger levels in each forked worker process."""
     _configure_ccxt_logger()
 
+    # 配置文件日志
+    from shared.utils.logger import setup_file_logging
+
+    log_dir = os.environ.get("WORKER_LOG_DIR", "/app/logs")
+    worker_name = os.environ.get("WORKER_NAME", "worker")
+    log_level_name = os.environ.get("CELERY_LOG_LEVEL", "info").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+
+    setup_file_logging(log_dir, worker_name, level=log_level)
+
 
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):

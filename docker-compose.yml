@@ -72,6 +72,7 @@ services:
       dockerfile: worker/Dockerfile
     volumes:
       - /app/data/aresbotWorker:/app/data/worker
+      - /app/data/aresbotWorker/logs:/app/logs   # 日志目录
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
