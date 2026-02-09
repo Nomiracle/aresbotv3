@@ -51,6 +51,7 @@ class TradingEngine:
 
         self._running = False
         self._current_price: Optional[float] = None
+        self._last_error: Optional[str] = None
         self._sync_interval = sync_interval
         self._last_sync_time = 0
         self._last_status_update_time = 0
@@ -119,6 +120,8 @@ class TradingEngine:
                 self._check_stop_loss()
                 self._periodic_sync()
 
+                # 主循环成功完成，清除错误
+                self._last_error = None
                 # 每轮主循环结束后强制刷新一次状态（Redis）
                 self._update_status(force=True, source="loop_complete")
 
@@ -139,6 +142,7 @@ class TradingEngine:
 
             except Exception as e:
                 self._log_exception("主循环异常 #%s: %s", loop_index, e)
+                self._last_error = str(e)
                 self._update_status(force=True, source="loop_exception")
                 time.sleep(1)
 
@@ -318,7 +322,9 @@ class TradingEngine:
                 self._pending_buys[result.order_id] = order
             self._log_info("买单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
         else:
-            self._log_debug("买单下单失败 aligned_price=%s aligned_qty=%s", aligned_price, aligned_qty)
+            error_msg = results[0].error if results and results[0].error else "下单失败"
+            self._last_error = f"买单下单失败: {error_msg}"
+            self._log_debug("买单下单失败 aligned_price=%s aligned_qty=%s error=%s", aligned_price, aligned_qty, error_msg)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> None:
         """下卖单"""
@@ -358,7 +364,9 @@ class TradingEngine:
                 self._pending_sells[result.order_id] = order
             self._log_info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
         else:
-            self._log_debug("卖单下单失败 buy_order=%s aligned_price=%s", buy_order.order_id, aligned_price)
+            error_msg = results[0].error if results and results[0].error else "下单失败"
+            self._last_error = f"卖单下单失败: {error_msg}"
+            self._log_debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
 
     def _on_order_filled(self, event: Event) -> None:
         """订单完全成交处理"""
@@ -718,6 +726,7 @@ class TradingEngine:
                 "position_count": self.position_tracker.get_position_count(),
                 "buy_orders": buy_orders,
                 "sell_orders": sell_orders,
+                "last_error": self._last_error,
             }
 
         try:
