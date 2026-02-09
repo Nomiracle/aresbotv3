@@ -23,11 +23,13 @@ from worker.core.base_exchange import (
 
 logger = logging.getLogger(__name__)
 
-SharedKey = Tuple[str, str, str, bool, str]
+# SharedKey: (api_key, api_secret, testnet, exchange_name)
+SharedKey = Tuple[str, str, bool, str]
 
 
 @dataclass
 class _WsCallbacks:
+    symbol: str
     on_price_update: Callable[[float], None]
     on_order_update: Callable[[Dict[str, Any]], None]
 
@@ -35,18 +37,20 @@ class _WsCallbacks:
 @dataclass
 class _SharedWsContext:
     key: SharedKey
-    market_symbol: str
-    rest_symbol: str
     log_prefix: str
     exchange: Any
     sync_timeout: float
+    # callbacks keyed by subscriber_id, each has symbol info
     callbacks: Dict[int, _WsCallbacks] = field(default_factory=dict)
     loop: Optional[asyncio.AbstractEventLoop] = None
     thread: Optional[threading.Thread] = None
     running: bool = True
     tasks: List[asyncio.Task[Any]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
-    last_price: Optional[float] = None
+    # last_price per symbol
+    last_prices: Dict[str, float] = field(default_factory=dict)
+    # subscribed symbols
+    subscribed_symbols: set = field(default_factory=set)
     error_log_cache: Dict[str, float] = field(default_factory=dict)
     error_log_interval: float = 2.0
 
@@ -98,15 +102,12 @@ class BinanceSpot(BaseExchange):
         self._shared_key = self._make_shared_key(
             api_key=api_key,
             api_secret=api_secret,
-            market_symbol=self._market_symbol,
             testnet=testnet,
         )
         self._shared_context = self._acquire_shared_context(
             key=self._shared_key,
             api_key=api_key,
             api_secret=api_secret,
-            market_symbol=self._market_symbol,
-            rest_symbol=self._rest_symbol,
             testnet=testnet,
             sync_timeout=self._sync_timeout,
             log_prefix=self._log_prefix,
@@ -118,6 +119,7 @@ class BinanceSpot(BaseExchange):
             BinanceSpot._finalize_instance,
             self._shared_key,
             self._subscriber_id,
+            self._market_symbol,
         )
 
         logger.info("%s BinanceSpot initialized testnet=%s", self._log_prefix, testnet)
@@ -152,13 +154,11 @@ class BinanceSpot(BaseExchange):
         cls,
         api_key: str,
         api_secret: str,
-        market_symbol: str,
         testnet: bool,
     ) -> SharedKey:
         return (
             api_key,
             api_secret,
-            market_symbol,
             bool(testnet),
             cls._EXCHANGE_NAME,
         )
@@ -191,8 +191,6 @@ class BinanceSpot(BaseExchange):
         key: SharedKey,
         api_key: str,
         api_secret: str,
-        market_symbol: str,
-        rest_symbol: str,
         testnet: bool,
         sync_timeout: float,
         log_prefix: str,
@@ -203,7 +201,7 @@ class BinanceSpot(BaseExchange):
                 return context
 
             secret_preview = cls._mask_credential(api_secret, keep_prefix=4, keep_suffix=4)
-            logger.info("%s creating exchange testnet=%s api_secret=%s", log_prefix, testnet, secret_preview)
+            logger.info("%s creating shared exchange testnet=%s api_secret=%s", log_prefix, testnet, secret_preview)
 
             exchange = cls._create_exchange(
                 api_key=api_key,
@@ -213,8 +211,6 @@ class BinanceSpot(BaseExchange):
             )
             context = _SharedWsContext(
                 key=key,
-                market_symbol=market_symbol,
-                rest_symbol=rest_symbol,
                 log_prefix=log_prefix,
                 exchange=exchange,
                 sync_timeout=sync_timeout,
@@ -223,7 +219,7 @@ class BinanceSpot(BaseExchange):
                 target=cls._run_shared_loop,
                 args=(key,),
                 daemon=True,
-                name=f"BinanceSpotWS-{rest_symbol}",
+                name=f"BinanceSpotWS-{api_key[:8]}",
             )
             cls._shared_contexts[key] = context
             context.thread.start()
@@ -233,9 +229,12 @@ class BinanceSpot(BaseExchange):
     def _register_callbacks(self) -> None:
         with self._shared_context.lock:
             self._shared_context.callbacks[self._subscriber_id] = _WsCallbacks(
+                symbol=self._market_symbol,
                 on_price_update=self._on_shared_price,
                 on_order_update=self._on_shared_order,
             )
+            # Add symbol to subscribed set
+            self._shared_context.subscribed_symbols.add(self._market_symbol)
 
     def _on_shared_price(self, price: float) -> None:
         if price <= 0:
@@ -290,7 +289,7 @@ class BinanceSpot(BaseExchange):
             logger.debug("%s close exchange failed: %s", context.log_prefix, err)
 
     @classmethod
-    def _finalize_instance(cls, key: SharedKey, subscriber_id: int) -> None:
+    def _finalize_instance(cls, key: SharedKey, subscriber_id: int, symbol: str) -> None:
         with cls._shared_lock:
             context = cls._shared_contexts.get(key)
         if context is None:
@@ -298,6 +297,13 @@ class BinanceSpot(BaseExchange):
 
         with context.lock:
             context.callbacks.pop(subscriber_id, None)
+            # Remove symbol if no other callbacks need it
+            symbol_still_needed = any(
+                cb.symbol == symbol for cb in context.callbacks.values()
+            )
+            if not symbol_still_needed:
+                context.subscribed_symbols.discard(symbol)
+
             has_callbacks = bool(context.callbacks)
             if has_callbacks:
                 return
@@ -324,9 +330,12 @@ class BinanceSpot(BaseExchange):
                 cls._shared_contexts.pop(key, None)
 
     @classmethod
-    def _dispatch_price(cls, context: _SharedWsContext, price: float) -> None:
+    def _dispatch_price(cls, context: _SharedWsContext, symbol: str, price: float) -> None:
         with context.lock:
-            callbacks = list(context.callbacks.values())
+            callbacks = [
+                cb for cb in context.callbacks.values()
+                if cb.symbol == symbol
+            ]
         for callback in callbacks:
             try:
                 callback.on_price_update(price)
@@ -335,8 +344,12 @@ class BinanceSpot(BaseExchange):
 
     @classmethod
     def _dispatch_order(cls, context: _SharedWsContext, order: Dict[str, Any]) -> None:
+        order_symbol = order.get("symbol", "")
         with context.lock:
-            callbacks = list(context.callbacks.values())
+            callbacks = [
+                cb for cb in context.callbacks.values()
+                if cb.symbol == order_symbol
+            ]
         for callback in callbacks:
             try:
                 callback.on_order_update(order)
@@ -421,6 +434,7 @@ class BinanceSpot(BaseExchange):
 
     @classmethod
     async def _watch_ticker(cls, context: _SharedWsContext) -> None:
+        """Watch ticker for all subscribed symbols."""
         msg_count = 0
         update_count = 0
         started_at = time.time()
@@ -428,52 +442,56 @@ class BinanceSpot(BaseExchange):
 
         while context.running:
             try:
-                bids_asks = await context.exchange.watch_bids_asks([context.market_symbol])
+                # Get current subscribed symbols
+                with context.lock:
+                    symbols = list(context.subscribed_symbols)
+
+                if not symbols:
+                    await asyncio.sleep(0.5)
+                    continue
+
+                bids_asks = await context.exchange.watch_bids_asks(symbols)
                 msg_count += 1
 
-                symbol_data: Optional[Dict[str, Any]] = None
-                if isinstance(bids_asks, dict):
-                    target = bids_asks.get(context.market_symbol)
-                    if isinstance(target, dict):
-                        symbol_data = target
-                    else:
-                        for value in bids_asks.values():
-                            if isinstance(value, dict):
-                                symbol_data = value
-                                break
-                if symbol_data is None:
+                if not isinstance(bids_asks, dict):
                     continue
 
-                bid = symbol_data.get("bid")
-                ask = symbol_data.get("ask")
-                if bid is None or ask is None:
-                    continue
+                # Process each symbol's data
+                for symbol, symbol_data in bids_asks.items():
+                    if not isinstance(symbol_data, dict):
+                        continue
 
-                current_price = (cls._safe_float(bid) + cls._safe_float(ask)) / 2
-                if current_price <= 0:
-                    continue
+                    bid = symbol_data.get("bid")
+                    ask = symbol_data.get("ask")
+                    if bid is None or ask is None:
+                        continue
 
-                with context.lock:
-                    price_changed = (
-                        context.last_price is None
-                        or abs(current_price - context.last_price) > 1e-12
-                    )
+                    current_price = (cls._safe_float(bid) + cls._safe_float(ask)) / 2
+                    if current_price <= 0:
+                        continue
+
+                    with context.lock:
+                        last_price = context.last_prices.get(symbol)
+                        price_changed = (
+                            last_price is None
+                            or abs(current_price - last_price) > 1e-12
+                        )
+                        if price_changed:
+                            context.last_prices[symbol] = current_price
+                            update_count += 1
+
                     if price_changed:
-                        context.last_price = current_price
-                        update_count += 1
-
-                if price_changed:
-                    cls._dispatch_price(context, current_price)
+                        cls._dispatch_price(context, symbol, current_price)
 
                 now = time.time()
-                if now - last_log_time >= 10:
+                if now - last_log_time >= 30:
                     elapsed = max(now - started_at, 1e-9)
+                    with context.lock:
+                        symbol_count = len(context.subscribed_symbols)
                     logger.debug(
-                        "%s price=%s bid=%s ask=%s ws_msgs=%s(%.2f/s) price_updates=%s(%.2f/s)",
+                        "%s ws_ticker symbols=%s msgs=%s(%.2f/s) updates=%s(%.2f/s)",
                         context.log_prefix,
-                        round(current_price, 8),
-                        bid,
-                        ask,
+                        symbol_count,
                         msg_count,
                         msg_count / elapsed,
                         update_count,
@@ -510,9 +528,11 @@ class BinanceSpot(BaseExchange):
 
     @classmethod
     async def _watch_orders(cls, context: _SharedWsContext) -> None:
+        """Watch orders for the account (all symbols)."""
         while context.running:
             try:
-                raw_orders = await context.exchange.watch_orders(context.market_symbol)
+                # watch_orders without symbol watches all orders for the account
+                raw_orders = await context.exchange.watch_orders()
 
                 # Normalize raw_orders to a list of dicts
                 if raw_orders is None:
@@ -531,10 +551,11 @@ class BinanceSpot(BaseExchange):
                     continue
 
                 for raw_order in orders:
-                    order = cls._normalize_order_payload_ws(context.market_symbol, raw_order)
+                    order = cls._normalize_order_payload_ws(raw_order)
                     if order is None:
                         continue
 
+                    order_symbol = order.get("symbol", "")
                     filled = cls._safe_float(order.get("filled") or order.get("executedQty"))
                     status = cls._map_order_status(order.get("status"), filled)
 
@@ -544,28 +565,27 @@ class BinanceSpot(BaseExchange):
                         if isinstance(fee, dict):
                             fee_currency = str(fee.get("currency") or "").upper()
                         logger.info(
-                            "%s order_filled id=%s side=%s price=%s qty=%s filled=%s fee_currency=%s fee_paid_externally=%s",
-                            context.log_prefix,
+                            "[%s] order_filled id=%s side=%s price=%s qty=%s filled=%s fee_currency=%s",
+                            order_symbol,
                             order.get("id") or order.get("orderId"),
                             order.get("side"),
                             order.get("price"),
                             order.get("amount") or order.get("origQty"),
                             filled,
                             fee_currency,
-                            fee_currency == "BNB",
                         )
                     elif status == OrderStatus.CANCELLED:
                         logger.info(
-                            "%s order_cancelled id=%s side=%s status=%s",
-                            context.log_prefix,
+                            "[%s] order_cancelled id=%s side=%s status=%s",
+                            order_symbol,
                             order.get("id") or order.get("orderId"),
                             order.get("side"),
                             str(order.get("status") or "").lower(),
                         )
                     else:
                         logger.debug(
-                            "%s order_update id=%s side=%s status=%s price=%s qty=%s filled=%s",
-                            context.log_prefix,
+                            "[%s] order_update id=%s side=%s status=%s price=%s qty=%s filled=%s",
+                            order_symbol,
                             order.get("id") or order.get("orderId"),
                             order.get("side"),
                             str(order.get("status") or "").lower(),
@@ -585,7 +605,7 @@ class BinanceSpot(BaseExchange):
                     await asyncio.sleep(1)
 
     @staticmethod
-    def _normalize_order_payload_ws(market_symbol: str, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_order_payload_ws(order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Normalize order payload from WebSocket updates."""
         order_id = order.get("id") or order.get("orderId")
         if order_id is None:
@@ -594,7 +614,9 @@ class BinanceSpot(BaseExchange):
         normalized = dict(order)
         normalized["id"] = str(order_id)
         normalized["orderId"] = str(order_id)
-        normalized["symbol"] = str(order.get("symbol") or market_symbol)
+        # Ensure symbol is present
+        raw_symbol = order.get("symbol") or ""
+        normalized["symbol"] = str(raw_symbol)
         if "side" in normalized and normalized["side"] is not None:
             normalized["side"] = str(normalized["side"]).lower()
         return normalized
