@@ -491,13 +491,25 @@ class BinanceSpot(BaseExchange):
         while context.running:
             try:
                 raw_orders = await context.exchange.watch_orders(context.market_symbol)
+
+                # Normalize raw_orders to a list of dicts
+                if raw_orders is None:
+                    continue
                 if isinstance(raw_orders, dict):
                     orders = [raw_orders]
-                else:
+                elif isinstance(raw_orders, list):
                     orders = [item for item in raw_orders if isinstance(item, dict)]
+                else:
+                    # Unexpected type (e.g. str), skip
+                    logger.debug(
+                        "%s watch_orders unexpected type: %s",
+                        context.log_prefix,
+                        type(raw_orders).__name__,
+                    )
+                    continue
 
                 for raw_order in orders:
-                    order = cls._normalize_order_payload(context.market_symbol, raw_order)
+                    order = cls._normalize_order_payload_ws(context.market_symbol, raw_order)
                     if order is None:
                         continue
 
@@ -551,7 +563,8 @@ class BinanceSpot(BaseExchange):
                     await asyncio.sleep(1)
 
     @staticmethod
-    def _normalize_order_payload(market_symbol: str, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _normalize_order_payload_ws(market_symbol: str, order: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Normalize order payload from WebSocket updates."""
         order_id = order.get("id") or order.get("orderId")
         if order_id is None:
             return None
@@ -821,15 +834,15 @@ class BinanceSpot(BaseExchange):
                             error=str(item.get("msg") or item.get("error") or "Unknown error"),
                         ))
             except Exception as err:
-                self._log_warning("batch order request error: %s", err)
+                self._log_debug("batch create_orders unavailable: %s", err)
 
                 # Some exchanges expose create_orders but do not support it for spot.
                 # Degrade gracefully to per-order endpoints.
                 if self._supports_exchange_method("create_order_ws", "createOrderWs"):
-                    self._log_info("batch create_orders failed, fallback to create_order_ws one-by-one")
+                    self._log_debug("fallback to create_order_ws one-by-one")
                     results.extend(self._place_orders_one_by_one(batch, use_ws=True))
                 else:
-                    self._log_info("batch create_orders failed, fallback to create_order one-by-one")
+                    self._log_debug("fallback to create_order one-by-one")
                     results.extend(self._place_orders_one_by_one(batch, use_ws=False))
 
         success_count = sum(1 for result in results if result.success)
