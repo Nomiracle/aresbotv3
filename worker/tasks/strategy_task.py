@@ -187,6 +187,10 @@ def run_strategy(
         f"task_id={runtime.task_id}"
     )
 
+    # 只在主线程中注册信号处理器
+    import threading
+    is_main_thread = threading.current_thread() is threading.main_thread()
+
     engine: TradingEngine | None = None
     try:
         # 3. Build and run the trading engine
@@ -205,10 +209,13 @@ def run_strategy(
             except Exception as err:
                 logger.error(f"Strategy {strategy_id} stop on SIGTERM failed: {err}")
 
-        signal.signal(signal.SIGTERM, _handle_sigterm)
+        if is_main_thread:
+            signal.signal(signal.SIGTERM, _handle_sigterm)
+
         engine.start()
 
-        signal.signal(signal.SIGTERM, previous_sigterm_handler)
+        if is_main_thread:
+            signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
         return {
             "strategy_id": runtime.strategy_id,
@@ -227,10 +234,11 @@ def run_strategy(
         raise
 
     finally:
-        try:
-            signal.signal(signal.SIGTERM, previous_sigterm_handler)
-        except Exception:
-            pass
+        if is_main_thread:
+            try:
+                signal.signal(signal.SIGTERM, previous_sigterm_handler)
+            except Exception:
+                pass
 
         # 4. Stop engine (cancel orders + close exchange)
         if engine:
