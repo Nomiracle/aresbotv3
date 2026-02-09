@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 import logging
 
-from worker import BaseExchange, ExchangeOrder
+from worker.core.base_exchange import BaseExchange, ExchangeOrder
 from worker.domain import Order, PositionTracker
 
 logger = logging.getLogger(__name__)

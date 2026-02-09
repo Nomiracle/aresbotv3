@@ -1,18 +1,11 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 import threading
 import logging
 import time
 
-from worker import (
-    BaseStrategy,
-    BaseExchange,
-    EventBus,
-    Event,
-    EventType,
-    OrderStatus,
-    ExchangeOrder,
-)
+from worker.core.base_exchange import BaseExchange, ExchangeOrder, OrderStatus
+from worker.core.base_strategy import BaseStrategy
 from worker.db import TradeStore, TradeRecord
 from worker.domain import Order, OrderState, PositionTracker, RiskManager
 from worker.engine.position_syncer import PositionSyncer
@@ -35,7 +28,6 @@ class TradingEngine:
         self.exchange = exchange
         self.risk_manager = risk_manager
         self.state_store = state_store
-        self.event_bus = EventBus()
         self.position_tracker = PositionTracker()
         self.position_syncer = PositionSyncer(
             exchange=exchange,
@@ -59,13 +51,6 @@ class TradingEngine:
 
         # Status update callback for distributed deployment
         self.on_status_update: Optional[callable] = None
-
-        self._setup_event_handlers()
-
-    def _setup_event_handlers(self) -> None:
-        self.event_bus.subscribe(EventType.ORDER_FILLED, self._on_order_filled)
-        self.event_bus.subscribe(EventType.ORDER_PARTIALLY_FILLED, self._on_order_partially_filled)
-        self.event_bus.subscribe(EventType.ORDER_CANCELLED, self._on_order_cancelled)
 
     def start(self) -> None:
         """启动交易引擎"""
@@ -201,55 +186,100 @@ class TradingEngine:
             exchange_order_map = {o.order_id: o for o in exchange_orders}
 
             with self._lock:
-                self._check_order_status(self._pending_buys, exchange_order_map)
-                self._check_order_status(self._pending_sells, exchange_order_map)
+                pending_buy_ids = list(self._pending_buys.keys())
+                pending_sell_ids = list(self._pending_sells.keys())
+
+            updates = self._check_order_status(
+                pending_order_ids=pending_buy_ids + pending_sell_ids,
+                exchange_order_map=exchange_order_map,
+            )
+            for ex_order in updates:
+                self._apply_order_update(ex_order)
 
         except Exception as e:
             self._log_warning("同步订单失败: %s", e)
 
     def _check_order_status(
         self,
-        pending_orders: Dict[str, Order],
-        exchange_order_map: Dict[str, ExchangeOrder]
-    ) -> None:
+        pending_order_ids: List[str],
+        exchange_order_map: Dict[str, ExchangeOrder],
+    ) -> List[ExchangeOrder]:
         """检查订单状态变化"""
-        for order_id in list(pending_orders.keys()):
+        updates: List[ExchangeOrder] = []
+        for order_id in pending_order_ids:
             ex_order = exchange_order_map.get(order_id)
             if ex_order is None:
                 ex_order = self.exchange.get_order(order_id)
                 if ex_order is None:
                     continue
 
-            if ex_order.status == OrderStatus.FILLED:
-                self._handle_order_filled(ex_order)
-            elif ex_order.status == OrderStatus.CANCELLED:
-                self._handle_order_cancelled(ex_order)
-            elif ex_order.status == OrderStatus.PARTIALLY_FILLED:
-                self._handle_order_partially_filled(ex_order)
+            if ex_order.status in {
+                OrderStatus.FILLED,
+                OrderStatus.CANCELLED,
+                OrderStatus.PARTIALLY_FILLED,
+            }:
+                updates.append(ex_order)
 
-    def _handle_order_filled(self, ex_order: ExchangeOrder) -> None:
+        return updates
+
+    def _apply_order_update(self, ex_order: ExchangeOrder) -> None:
+        if ex_order.status == OrderStatus.FILLED:
+            self._apply_order_filled(ex_order)
+        elif ex_order.status == OrderStatus.CANCELLED:
+            self._apply_order_cancelled(ex_order)
+        elif ex_order.status == OrderStatus.PARTIALLY_FILLED:
+            self._apply_order_partially_filled(ex_order)
+
+    def _apply_order_filled(self, ex_order: ExchangeOrder) -> None:
         """处理订单成交"""
-        self.event_bus.publish(Event(
-            type=EventType.ORDER_FILLED,
-            data={"order": ex_order},
-            timestamp=time.time(),
-        ))
+        order_id = ex_order.order_id
+        buy_order: Optional[Order] = None
+        sell_order: Optional[Order] = None
 
-    def _handle_order_partially_filled(self, ex_order: ExchangeOrder) -> None:
+        with self._lock:
+            if order_id in self._pending_buys:
+                buy_order = self._pending_buys.pop(order_id)
+            elif order_id in self._pending_sells:
+                sell_order = self._pending_sells.pop(order_id)
+
+        if buy_order is not None:
+            self._handle_buy_filled(buy_order, ex_order)
+            return
+
+        if sell_order is not None:
+            self._handle_sell_filled(sell_order, ex_order)
+
+    def _apply_order_partially_filled(self, ex_order: ExchangeOrder) -> None:
         """处理部分成交"""
-        self.event_bus.publish(Event(
-            type=EventType.ORDER_PARTIALLY_FILLED,
-            data={"order": ex_order},
-            timestamp=time.time(),
-        ))
+        order_id = ex_order.order_id
+        order: Optional[Order] = None
+        new_filled = 0.0
 
-    def _handle_order_cancelled(self, ex_order: ExchangeOrder) -> None:
+        with self._lock:
+            if order_id in self._pending_buys:
+                order = self._pending_buys[order_id]
+            elif order_id in self._pending_sells:
+                order = self._pending_sells[order_id]
+
+            if order is None:
+                return
+
+            old_filled = order.filled_quantity
+            order.update_fill(ex_order.filled_quantity, ex_order.price)
+            new_filled = ex_order.filled_quantity - old_filled
+
+        if new_filled > 0:
+            self._save_partial_fill(order, new_filled, ex_order.price)
+
+    def _apply_order_cancelled(self, ex_order: ExchangeOrder) -> None:
         """处理订单取消"""
-        self.event_bus.publish(Event(
-            type=EventType.ORDER_CANCELLED,
-            data={"order": ex_order},
-            timestamp=time.time(),
-        ))
+        order_id = ex_order.order_id
+
+        with self._lock:
+            self._pending_buys.pop(order_id, None)
+            self._pending_sells.pop(order_id, None)
+
+        self._log_info("订单已取消: %s", order_id)
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单"""
@@ -368,43 +398,6 @@ class TradingEngine:
             self._last_error = f"卖单下单失败: {error_msg}"
             self._log_debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
 
-    def _on_order_filled(self, event: Event) -> None:
-        """订单完全成交处理"""
-        ex_order: ExchangeOrder = event.data["order"]
-        order_id = ex_order.order_id
-
-        with self._lock:
-            if order_id in self._pending_buys:
-                buy_order = self._pending_buys.pop(order_id)
-                self._handle_buy_filled(buy_order, ex_order)
-            elif order_id in self._pending_sells:
-                sell_order = self._pending_sells.pop(order_id)
-                self._handle_sell_filled(sell_order, ex_order)
-
-    def _on_order_partially_filled(self, event: Event) -> None:
-        """订单部分成交处理"""
-        ex_order: ExchangeOrder = event.data["order"]
-        order_id = ex_order.order_id
-
-        with self._lock:
-            if order_id in self._pending_buys:
-                order = self._pending_buys[order_id]
-                old_filled = order.filled_quantity
-                order.update_fill(ex_order.filled_quantity, ex_order.price)
-
-                new_filled = ex_order.filled_quantity - old_filled
-                if new_filled > 0:
-                    self._save_partial_fill(order, new_filled, ex_order.price)
-
-            elif order_id in self._pending_sells:
-                order = self._pending_sells[order_id]
-                old_filled = order.filled_quantity
-                order.update_fill(ex_order.filled_quantity, ex_order.price)
-
-                new_filled = ex_order.filled_quantity - old_filled
-                if new_filled > 0:
-                    self._save_partial_fill(order, new_filled, ex_order.price)
-
     def _handle_buy_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
         """处理买单成交"""
         order.update_fill(ex_order.filled_quantity, ex_order.price)
@@ -444,17 +437,6 @@ class TradingEngine:
         self._save_trade(order, filled_price, pnl)
 
         self._log_info("卖单成交: %s, 价格=%s, 盈亏=%s", order.order_id, filled_price, pnl)
-
-    def _on_order_cancelled(self, event: Event) -> None:
-        """订单取消处理"""
-        ex_order: ExchangeOrder = event.data["order"]
-        order_id = ex_order.order_id
-
-        with self._lock:
-            self._pending_buys.pop(order_id, None)
-            self._pending_sells.pop(order_id, None)
-
-        self._log_info("订单已取消: %s", order_id)
 
     def _save_trade(self, order: Order, filled_price: float, pnl: Optional[float] = None) -> None:
         """保存成交记录"""
@@ -513,6 +495,7 @@ class TradingEngine:
                 order_price=order.price,
                 current_price=self._current_price,
                 is_buy=True,
+                grid_index=order.grid_index,
             )
             if new_price:
                 aligned_price = self.exchange.align_price(new_price, rules)
@@ -530,6 +513,7 @@ class TradingEngine:
                 order_price=order.price,
                 current_price=self._current_price,
                 is_buy=False,
+                grid_index=order.grid_index,
             )
             if new_price:
                 aligned_price = self.exchange.align_price(new_price, rules)

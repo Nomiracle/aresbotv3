@@ -1,18 +1,18 @@
 """Worker module for AresBot."""
-from worker.base_exchange import (
+from worker.core.base_exchange import (
     BaseExchange,
     OrderStatus,
     OrderResult,
     ExchangeOrder,
     TradingRules,
 )
-from worker.base_strategy import (
+from worker.core.base_strategy import (
     BaseStrategy,
     Signal,
     TradeDecision,
     StrategyConfig,
 )
-from worker.event_bus import EventBus, Event, EventType
+from worker.trading_engine import TradingEngine
 
 __all__ = [
     "BaseExchange",
@@ -24,7 +24,5 @@ __all__ = [
     "Signal",
     "TradeDecision",
     "StrategyConfig",
-    "EventBus",
-    "Event",
-    "EventType",
+    "TradingEngine",
 ]

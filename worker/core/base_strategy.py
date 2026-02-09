@@ -66,6 +66,7 @@ class BaseStrategy(ABC):
         order_price: float,
         current_price: float,
         is_buy: bool,
+        grid_index: int = 1,
     ) -> Optional[float]:
         """判断是否需要改价，返回新价格或None"""
         pass

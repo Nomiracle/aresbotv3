@@ -1,7 +1,7 @@
 from typing import Optional
 import logging
 
-from worker import BaseStrategy, StrategyConfig, TradeDecision, Signal
+from worker.core.base_strategy import BaseStrategy, Signal, StrategyConfig, TradeDecision
 
 
 logger = logging.getLogger(__name__)
@@ -76,10 +76,11 @@ class GridStrategy(BaseStrategy):
         order_price: float,
         current_price: float,
         is_buy: bool,
+        grid_index: int = 1,
     ) -> Optional[float]:
         """判断是否需要改价"""
         if is_buy:
-            target_price = self.calculate_buy_price(current_price, 1)
+            target_price = self.calculate_buy_price(current_price, grid_index)
             diff_pct = abs(order_price - target_price) / target_price * 100
 
             if diff_pct > self.reprice_threshold:

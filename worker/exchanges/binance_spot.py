@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import ccxt.pro as ccxtpro
 
-from worker.base_exchange import (
+from worker.core.base_exchange import (
     BaseExchange,
     ExchangeOrder,
     OrderResult,
@@ -85,6 +85,8 @@ class BinanceSpot(BaseExchange):
         self._current_price: Optional[float] = None
         self._orders_cache: Dict[str, ExchangeOrder] = {}
         self._trading_rules: Optional[TradingRules] = None
+        self._open_orders_reconcile_every_calls = 3
+        self._open_orders_call_count = 0
 
         self._price_lock = threading.Lock()
         self._orders_lock = threading.Lock()
@@ -380,6 +382,20 @@ class BinanceSpot(BaseExchange):
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _is_order_not_found_error(err: Exception) -> bool:
+        error_text = str(err).lower()
+        return any(
+            marker in error_text
+            for marker in (
+                "unknown order",
+                "order does not exist",
+                "order not found",
+                "not found",
+                "-2013",
+            )
+        )
 
     @classmethod
     async def _watch_ticker(cls, context: _SharedWsContext) -> None:
@@ -1023,7 +1039,10 @@ class BinanceSpot(BaseExchange):
         """查询订单 - 优先使用WS缓存"""
         with self._orders_lock:
             cached_order = self._orders_cache.get(order_id)
-        if cached_order is not None:
+        if cached_order is not None and cached_order.status not in {
+            OrderStatus.PLACED,
+            OrderStatus.PARTIALLY_FILLED,
+        }:
             self._log_debug("get_order from cache order_id=%s", order_id)
             return cached_order
 
@@ -1038,18 +1057,22 @@ class BinanceSpot(BaseExchange):
                 return self._orders_cache.get(order_id)
         except Exception as err:
             self._log_warning("get_order failed order_id=%s error=%s", order_id, err)
-            return None
+            return cached_order
 
     def get_open_orders(self) -> List[ExchangeOrder]:
         """获取未完成订单"""
         with self._orders_lock:
+            self._open_orders_call_count += 1
+            should_refresh_from_rest = (
+                self._open_orders_call_count % self._open_orders_reconcile_every_calls == 0
+            )
             cached_orders = list(self._orders_cache.values())
         open_orders = [
             order
             for order in cached_orders
             if order.status in (OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED)
         ]
-        if open_orders:
+        if open_orders and not should_refresh_from_rest:
             self._log_debug("get_open_orders from cache count=%s", len(open_orders))
             return open_orders
 
@@ -1060,9 +1083,48 @@ class BinanceSpot(BaseExchange):
                 lambda: self._exchange.fetch_open_orders(self._market_symbol),
                 timeout=self._sync_timeout,
             )
+
+            rest_open_ids: set[str] = set()
             for order in orders:
                 if isinstance(order, dict):
-                    self._update_order_cache(order)
+                    exchange_order = self._update_order_cache(order)
+                    if exchange_order is not None:
+                        rest_open_ids.add(exchange_order.order_id)
+
+            with self._orders_lock:
+                stale_open_ids = [
+                    order.order_id
+                    for order in self._orders_cache.values()
+                    if order.status in (OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED)
+                    and order.order_id not in rest_open_ids
+                ]
+
+            for stale_order_id in stale_open_ids:
+                try:
+                    self._log_debug("reconcile stale open order from rest order_id=%s", stale_order_id)
+                    order = self._run_sync(
+                        lambda oid=stale_order_id: self._exchange.fetch_order(oid, self._market_symbol),
+                        timeout=self._sync_timeout,
+                    )
+                    if isinstance(order, dict):
+                        self._update_order_cache(order)
+                except Exception as err:
+                    if self._is_order_not_found_error(err):
+                        self._log_info(
+                            "reconcile stale order not found, mark cancelled order_id=%s",
+                            stale_order_id,
+                        )
+                        with self._orders_lock:
+                            cached = self._orders_cache.get(stale_order_id)
+                            if cached is not None:
+                                cached.status = OrderStatus.CANCELLED
+                    else:
+                        self._log_warning(
+                            "reconcile stale order failed, keep cache order_id=%s error=%s",
+                            stale_order_id,
+                            err,
+                        )
+
             with self._orders_lock:
                 updated_orders = list(self._orders_cache.values())
             results = [

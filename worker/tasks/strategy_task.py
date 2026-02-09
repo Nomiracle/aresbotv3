@@ -18,7 +18,7 @@ from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
-from worker.engine.trading_engine import TradingEngine
+from worker.trading_engine import TradingEngine
 from worker.exchanges.binance_spot import BinanceSpot
 from worker.strategies.grid_strategy import GridStrategy
 
