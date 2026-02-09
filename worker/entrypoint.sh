@@ -4,6 +4,8 @@ set -eu
 WORKER_NAME_FILE="${WORKER_NAME_FILE:-/app/data/worker/worker_name}"
 WORKER_NAME_PREFIX="${WORKER_NAME_PREFIX:-celery@worker}"
 CELERY_LOG_LEVEL="${CELERY_LOG_LEVEL:-info}"
+CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-4}"
+CELERY_POOL="${CELERY_POOL:-threads}"
 
 mkdir -p "$(dirname "$WORKER_NAME_FILE")"
 
@@ -48,5 +50,9 @@ fi
 
 export WORKER_NAME="$FINAL_WORKER_NAME"
 
-echo "Starting Celery worker with name: $FINAL_WORKER_NAME, loglevel: $CELERY_LOG_LEVEL"
-exec celery -A worker.celery_app worker --loglevel="$CELERY_LOG_LEVEL" -n "$FINAL_WORKER_NAME"
+echo "Starting Celery worker with name: $FINAL_WORKER_NAME, loglevel: $CELERY_LOG_LEVEL, pool: $CELERY_POOL, concurrency: $CELERY_CONCURRENCY"
+exec celery -A worker.celery_app worker \
+  --loglevel="$CELERY_LOG_LEVEL" \
+  -n "$FINAL_WORKER_NAME" \
+  -c "$CELERY_CONCURRENCY" \
+  --pool="$CELERY_POOL"

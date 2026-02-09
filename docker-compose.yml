@@ -89,6 +89,8 @@ services:
       - WORKER_NAME_PREFIX=${WORKER_NAME_PREFIX:-celery@worker}
       - WORKER_NODE_ID=${WORKER_NODE_ID:-}
       - CELERY_LOG_LEVEL=${CELERY_LOG_LEVEL:-info}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-4}
+      - CELERY_POOL=${CELERY_POOL:-threads}
     networks:
       - default
     depends_on:
