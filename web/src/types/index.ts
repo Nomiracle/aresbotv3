@@ -62,6 +62,7 @@ export interface StrategyStatus {
   strategy_id: number
   is_running: boolean
   task_id?: string
+  worker_name?: string
   worker_ip?: string
   worker_hostname?: string
   current_price: number | null

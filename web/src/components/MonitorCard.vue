@@ -56,6 +56,15 @@ const updateTimeAgo = computed(() => {
   return `${Math.floor(seconds / 3600)}h前`
 })
 
+// Worker 信息显示
+const workerDisplay = computed(() => {
+  const name = props.status?.worker_name
+  const hostname = props.status?.worker_hostname
+  if (name) return name
+  if (hostname) return hostname
+  return ''
+})
+
 // 挂单总价值
 const totalOrderValue = computed(() => {
   const buyOrders = props.status?.buy_orders ?? []
@@ -144,11 +153,15 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 时间行：运行时间 + 更新时间 -->
+    <!-- 时间行：运行时间 + 更新时间 + Worker -->
     <div v-if="isRunning" class="time-row">
       <span>运行: {{ runTimeDisplay }}</span>
       <span class="separator">|</span>
       <span>更新: {{ updateTimeAgo }}</span>
+      <template v-if="workerDisplay">
+        <span class="separator">|</span>
+        <span class="worker-info">{{ workerDisplay }}</span>
+      </template>
     </div>
 
     <!-- 价格行 -->
@@ -291,6 +304,11 @@ onUnmounted(() => {
   margin-top: 6px;
   font-size: 12px;
   color: #909399;
+}
+
+.worker-info {
+  color: #606266;
+  font-weight: 500;
 }
 
 .separator {
