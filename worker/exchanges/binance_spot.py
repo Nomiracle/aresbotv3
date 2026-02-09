@@ -262,10 +262,20 @@ class BinanceSpot(BaseExchange):
             tasks = list(context.tasks)
         if not tasks:
             return
+
         for task in tasks:
             if not task.done():
                 task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Wait with timeout to avoid blocking indefinitely
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=3.0,
+            )
+        except asyncio.TimeoutError:
+            logger.debug("%s cancel tasks timeout, forcing", context.log_prefix)
+
         with context.lock:
             context.tasks = []
 
@@ -273,9 +283,11 @@ class BinanceSpot(BaseExchange):
     async def _shutdown_context(cls, context: _SharedWsContext) -> None:
         await cls._cancel_context_tasks(context)
         try:
-            await context.exchange.close()
+            await asyncio.wait_for(context.exchange.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.debug("%s close exchange timeout", context.log_prefix)
         except Exception as err:
-            logger.warning("%s close exchange failed: %s", context.log_prefix, err)
+            logger.debug("%s close exchange failed: %s", context.log_prefix, err)
 
     @classmethod
     def _finalize_instance(cls, key: SharedKey, subscriber_id: int) -> None:
@@ -293,23 +305,18 @@ class BinanceSpot(BaseExchange):
             loop = context.loop
             thread = context.thread
 
-        if loop and loop.is_running():
+        # Try to shutdown gracefully if loop is still running
+        if loop is not None and loop.is_running():
             try:
                 future = asyncio.run_coroutine_threadsafe(cls._shutdown_context(context), loop)
                 future.result(timeout=min(context.sync_timeout, 5.0))
-            except Exception as err:
-                logger.warning("%s cancel shared ws tasks failed: %s", context.log_prefix, err)
-        else:
-            temp_loop = asyncio.new_event_loop()
-            try:
-                temp_loop.run_until_complete(cls._shutdown_context(context))
-            except Exception as err:
-                logger.warning("%s shutdown shared context failed: %s", context.log_prefix, err)
-            finally:
-                temp_loop.close()
+            except Exception:
+                # Ignore shutdown errors - loop may have closed already
+                pass
 
+        # Wait for thread to finish
         if thread and thread.is_alive():
-            thread.join(timeout=5)
+            thread.join(timeout=3)
 
         with cls._shared_lock:
             current = cls._shared_contexts.get(key)
@@ -351,8 +358,23 @@ class BinanceSpot(BaseExchange):
         try:
             loop.run_until_complete(cls._ws_main(context))
         except Exception as err:
-            logger.warning("%s shared ws loop error: %s", context.log_prefix, err)
+            logger.debug("%s shared ws loop error: %s", context.log_prefix, err)
         finally:
+            # Cancel all pending tasks before closing loop
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+            # Close exchange connection
+            try:
+                loop.run_until_complete(
+                    asyncio.wait_for(context.exchange.close(), timeout=2.0)
+                )
+            except Exception:
+                pass
+
             loop.close()
             with context.lock:
                 context.loop = None
