@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db_session
-from shared.db.crud import TradeCRUD
-from shared.db.models import Trade
+from api.db.crud import TradeCRUD
+from api.db.models import Trade
 
 router = APIRouter()
 

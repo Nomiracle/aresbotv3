@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db_session
-from shared.db.models import ExchangeAccount, Strategy, Trade
+from api.db.models import ExchangeAccount, Strategy, Trade
 
 router = APIRouter()
 

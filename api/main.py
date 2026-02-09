@@ -10,7 +10,7 @@ import uvicorn
 import yaml
 
 from api.app import create_app
-from shared.db.database import init_db, build_database_url
+from api.db.database import init_db, build_database_url
 from shared.utils.crypto import init_encryption
 from shared.utils.logger import setup_logger
 

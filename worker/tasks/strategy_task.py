@@ -16,7 +16,7 @@ from shared.config import TradingConfig
 from shared.core.redis_client import get_redis_client
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
-from worker.state_store import StateStore
+from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.engine.trading_engine import TradingEngine
 from worker.exchanges.binance_spot import BinanceSpot
@@ -271,7 +271,7 @@ def _create_engine(
     )
     grid_strategy = GridStrategy(trading_config)
     risk_manager = RiskManager(risk_config)
-    state_store = StateStore(f"trades_{strategy_id}.db")
+    state_store = TradeStore(strategy_id)
 
     # Build engine
     engine = TradingEngine(

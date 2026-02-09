@@ -10,11 +10,10 @@ from worker import (
     EventBus,
     Event,
     EventType,
-    StateStore,
-    TradeRecord,
     OrderStatus,
     ExchangeOrder,
 )
+from worker.db import TradeStore, TradeRecord
 from worker.domain import Order, OrderState, PositionTracker, RiskManager
 from worker.engine.position_syncer import PositionSyncer
 
@@ -29,13 +28,13 @@ class TradingEngine:
         strategy: BaseStrategy,
         exchange: BaseExchange,
         risk_manager: RiskManager,
-        state_store: Optional[StateStore] = None,
+        state_store: Optional[TradeStore] = None,
         sync_interval: int = 60,
     ):
         self.strategy = strategy
         self.exchange = exchange
         self.risk_manager = risk_manager
-        self.state_store = state_store or StateStore()
+        self.state_store = state_store
         self.event_bus = EventBus()
         self.position_tracker = PositionTracker()
         self.position_syncer = PositionSyncer(

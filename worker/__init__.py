@@ -13,7 +13,6 @@ from worker.base_strategy import (
     StrategyConfig,
 )
 from worker.event_bus import EventBus, Event, EventType
-from worker.state_store import StateStore, TradeRecord
 
 __all__ = [
     "BaseExchange",
@@ -28,6 +27,4 @@ __all__ = [
     "EventBus",
     "Event",
     "EventType",
-    "StateStore",
-    "TradeRecord",
 ]

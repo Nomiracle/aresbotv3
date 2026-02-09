@@ -4,7 +4,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.db.database import get_session
+from api.db.database import get_session
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:

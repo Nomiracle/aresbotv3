@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from shared.db.database import create_tables, close_db
+from api.db.database import create_tables, close_db
 
 
 @asynccontextmanager

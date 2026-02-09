@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db_session
 from api.celery_client import get_active_workers, send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
-from shared.db.crud import StrategyCRUD, AccountCRUD
-from shared.db.models import Strategy
+from api.db.crud import StrategyCRUD, AccountCRUD
+from api.db.models import Strategy
 
 router = APIRouter()
 
