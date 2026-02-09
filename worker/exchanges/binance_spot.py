@@ -1093,3 +1093,11 @@ class BinanceSpot(BaseExchange):
         free_balance = balance.get(asset, {}).get("free", 0)
         self._log_debug("get_balance asset=%s free=%s", asset, free_balance)
         return free_balance
+
+    def close(self) -> None:
+        """关闭交易所连接，释放资源"""
+        self._log_info("closing exchange connection")
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer and finalizer.alive:
+            finalizer()
+        self._log_info("exchange connection closed")

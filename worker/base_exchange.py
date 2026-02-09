@@ -147,3 +147,7 @@ class BaseExchange(ABC):
             rules = self.get_trading_rules()
         aligned = math.floor(qty / rules.step_size) * rules.step_size
         return round(aligned, rules.qty_decimals)
+
+    def close(self) -> None:
+        """关闭交易所连接，释放资源（子类可覆盖）"""
+        pass

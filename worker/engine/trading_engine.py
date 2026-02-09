@@ -79,6 +79,11 @@ class TradingEngine:
         self._running = False
         self._cancel_all_pending_orders()
         self._update_status(force=True, source="stop")
+        # 释放交易所连接
+        try:
+            self.exchange.close()
+        except Exception as e:
+            self._log_warning("关闭交易所连接失败: %s", e)
 
     def _cancel_all_pending_orders(self) -> None:
         """停止时取消所有挂单"""

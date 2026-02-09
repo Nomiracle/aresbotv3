@@ -184,6 +184,7 @@ def run_strategy(
         f"task_id={runtime.task_id}"
     )
 
+    engine: TradingEngine | None = None
     try:
         # 3. Build and run the trading engine
         engine = _create_engine(
@@ -196,7 +197,8 @@ def run_strategy(
         def _handle_sigterm(signum, frame):
             logger.info(f"Strategy {strategy_id} received SIGTERM, stopping engine")
             try:
-                engine.stop()
+                if engine:
+                    engine.stop()
             except Exception as err:
                 logger.error(f"Strategy {strategy_id} stop on SIGTERM failed: {err}")
 
@@ -227,7 +229,14 @@ def run_strategy(
         except Exception:
             pass
 
-        # 4. Cleanup
+        # 4. Stop engine (cancel orders + close exchange)
+        if engine:
+            try:
+                engine.stop()
+            except Exception as err:
+                logger.warning(f"Strategy {strategy_id} engine.stop() failed: {err}")
+
+        # 5. Cleanup Redis
         _cleanup_runtime(redis_client, strategy_id)
         logger.info(f"Strategy {strategy_id} stopped and cleaned up")
 
