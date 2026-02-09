@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
-import type { StrategyStatus, RunningStrategy, OrderDetail } from '@/types'
+import type { StrategyStatus, OrderDetail } from '@/types'
 
 interface MonitorCardStrategy {
   id: number
