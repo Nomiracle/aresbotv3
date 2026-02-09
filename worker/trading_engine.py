@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+from collections import deque
 from datetime import datetime
 import threading
 import logging
@@ -38,7 +39,8 @@ class TradingEngine:
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
-        self._stop_loss_triggered: set[str] = set()
+        # Use deque with maxlen to limit memory usage for stop loss records
+        self._stop_loss_triggered: deque[str] = deque(maxlen=1000)
         self._lock = threading.Lock()
 
         self._running = False
@@ -597,7 +599,7 @@ class TradingEngine:
                 entry_time=pos.created_at,
             )
             if should_stop:
-                self._stop_loss_triggered.add(pos.order_id)
+                self._stop_loss_triggered.append(pos.order_id)
                 self._execute_stop_loss(pos, reason)
 
     def _execute_stop_loss(self, position, reason: str) -> None:
@@ -645,8 +647,33 @@ class TradingEngine:
             pending_sells_copy = dict(self._pending_sells)
 
         self._log_debug("触发定期同步 pending_sells=%s", len(pending_sells_copy))
+        self._log_memory_stats()
         self.position_syncer.sync(pending_sells_copy)
         self._repair_positions_and_orders(pending_sells_copy)
+
+    def _log_memory_stats(self) -> None:
+        """Log memory usage statistics for monitoring."""
+        try:
+            import psutil
+            process = psutil.Process()
+            mem = process.memory_info()
+
+            orders_cache_size = 0
+            if hasattr(self.exchange, '_orders_cache'):
+                orders_cache_size = len(self.exchange._orders_cache)
+
+            self._log_info(
+                "Memory: RSS=%dMB orders_cache=%d positions=%d stop_loss_triggered=%d",
+                mem.rss // 1024 // 1024,
+                orders_cache_size,
+                self.position_tracker.get_position_count(),
+                len(self._stop_loss_triggered),
+            )
+        except ImportError:
+            # psutil not installed, skip memory logging
+            pass
+        except Exception as e:
+            self._log_debug("Memory stats error: %s", e)
 
     def _repair_positions_and_orders(self, pending_sells: Dict[str, Order]) -> None:
         """最小修复：补卖单、取消多余卖单"""

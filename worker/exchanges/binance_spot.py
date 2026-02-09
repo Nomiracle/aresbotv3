@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # SharedKey: (api_key, api_secret, testnet, exchange_name)
 SharedKey = Tuple[str, str, bool, str]
 
+# Memory optimization constants
+MAX_ORDER_CACHE_SIZE = 1000
+MAX_ERROR_LOG_CACHE = 100
+
 
 @dataclass
 class _WsCallbacks:
@@ -255,6 +259,14 @@ class BinanceSpot(BaseExchange):
     def _should_log_error(cls, context: _SharedWsContext, error_key: str) -> bool:
         current_ts = time.time()
         with context.lock:
+            # Cleanup expired entries when cache grows too large
+            if len(context.error_log_cache) > MAX_ERROR_LOG_CACHE:
+                cutoff = current_ts - context.error_log_interval * 10
+                context.error_log_cache = {
+                    k: v for k, v in context.error_log_cache.items()
+                    if v > cutoff
+                }
+
             last_ts = context.error_log_cache.get(error_key, 0.0)
             if current_ts - last_ts >= context.error_log_interval:
                 context.error_log_cache[error_key] = current_ts
@@ -672,7 +684,29 @@ class BinanceSpot(BaseExchange):
 
         with self._orders_lock:
             self._orders_cache[order_id] = exchange_order
+            # Cleanup old completed orders when cache grows too large
+            self._cleanup_old_orders()
         return exchange_order
+
+    def _cleanup_old_orders(self) -> None:
+        """Clean up old completed orders to prevent memory growth.
+
+        Must be called with self._orders_lock held.
+        """
+        if len(self._orders_cache) <= MAX_ORDER_CACHE_SIZE:
+            return
+
+        # Find completed orders
+        completed = [
+            (oid, o) for oid, o in self._orders_cache.items()
+            if o.status in (OrderStatus.FILLED, OrderStatus.CANCELLED)
+        ]
+
+        if len(completed) > MAX_ORDER_CACHE_SIZE // 2:
+            # Sort by order_id (older orders have smaller IDs) and remove older half
+            completed.sort(key=lambda x: x[1].order_id)
+            for oid, _ in completed[:len(completed) // 2]:
+                self._orders_cache.pop(oid, None)
 
     def _get_shared_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         with self._shared_context.lock:
