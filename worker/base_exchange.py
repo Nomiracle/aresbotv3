@@ -74,6 +74,17 @@ class BaseExchange(ABC):
         self.symbol = symbol
         self.testnet = testnet
 
+    @property
+    def log_prefix(self) -> str:
+        """获取日志前缀 [SYMBOL] [API_KEY_PREFIX] [EXCHANGE_ID]"""
+        symbol = self.symbol
+        if "/" not in symbol:
+            if symbol.upper().endswith("USDT") and len(symbol) > 4:
+                symbol = f"{symbol[:-4]}/USDT".upper()
+        api_key_prefix = (self.api_key or "")[:8]
+        exchange_id = self.get_exchange_info().get("id", "unknown")
+        return f"[{symbol}] [{api_key_prefix}] [{exchange_id}]"
+
     @classmethod
     @abstractmethod
     def get_exchange_info(cls) -> Dict[str, str]:

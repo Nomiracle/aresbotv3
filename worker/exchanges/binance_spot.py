@@ -906,39 +906,118 @@ class BinanceSpot(BaseExchange):
         return results
 
     def cancel_batch_orders(self, order_ids: List[str]) -> List[OrderResult]:
-        """批量取消订单"""
+        """批量取消订单
+
+        优先级：
+        1) cancel_orders (批量取消)
+        2) cancel_order_ws (逐个 ws 取消)
+        3) cancel_order (逐个 rest 取消)
+        """
         if not order_ids:
             return []
 
         self._log_debug("cancel_batch_orders called count=%s", len(order_ids))
-        try:
-            self._run_sync(
-                lambda: self._exchange.cancel_orders(order_ids, self._market_symbol),
-                timeout=self._sync_timeout,
+
+        # 1. 尝试 cancel_orders (批量取消)
+        if self._supports_exchange_method("cancel_orders", "cancelOrders"):
+            try:
+                self._run_sync(
+                    lambda: self._exchange.cancel_orders(order_ids, self._market_symbol),
+                    timeout=self._sync_timeout,
+                )
+                results = []
+                for order_id in order_ids:
+                    with self._orders_lock:
+                        if order_id in self._orders_cache:
+                            self._orders_cache[order_id].status = OrderStatus.CANCELLED
+                    results.append(OrderResult(
+                        success=True,
+                        order_id=order_id,
+                        status=OrderStatus.CANCELLED,
+                    ))
+                self._log_info("cancel_batch_orders via cancel_orders success count=%s", len(results))
+                return results
+            except Exception as err:
+                self._log_debug("cancel_orders not supported or failed: %s, trying fallback", err)
+
+        # 2. 尝试 cancel_order_ws (逐个 ws 取消)
+        if self._supports_exchange_method("cancel_order_ws", "cancelOrderWs"):
+            try:
+                results = self._cancel_orders_one_by_one(order_ids, use_ws=True)
+                success_count = sum(1 for r in results if r.success)
+                self._log_info("cancel_batch_orders via cancel_order_ws success=%s total=%s", success_count, len(results))
+                return results
+            except Exception as err:
+                self._log_debug("cancel_order_ws failed: %s, trying fallback", err)
+
+        # 3. 尝试 cancel_order (逐个 rest 取消)
+        if self._supports_exchange_method("cancel_order", "cancelOrder"):
+            try:
+                results = self._cancel_orders_one_by_one(order_ids, use_ws=False)
+                success_count = sum(1 for r in results if r.success)
+                self._log_info("cancel_batch_orders via cancel_order success=%s total=%s", success_count, len(results))
+                return results
+            except Exception as err:
+                self._log_warning("cancel_order failed: %s", err)
+                return [
+                    OrderResult(
+                        success=False,
+                        order_id=order_id,
+                        status=OrderStatus.FAILED,
+                        error=str(err),
+                    )
+                    for order_id in order_ids
+                ]
+
+        # 所有方法都不支持
+        self._log_warning("cancel_batch_orders: no supported cancel method available")
+        return [
+            OrderResult(
+                success=False,
+                order_id=order_id,
+                status=OrderStatus.FAILED,
+                error="No supported cancel method",
             )
-            results = []
-            for order_id in order_ids:
+            for order_id in order_ids
+        ]
+
+    def _cancel_orders_one_by_one(self, order_ids: List[str], use_ws: bool) -> List[OrderResult]:
+        """逐个取消订单"""
+        results: List[OrderResult] = []
+        method_name = "cancel_order_ws" if use_ws else "cancel_order"
+
+        for order_id in order_ids:
+            try:
+                if use_ws:
+                    self._run_sync(
+                        lambda oid=order_id: self._exchange.cancel_order_ws(oid, self._market_symbol),
+                        timeout=self._sync_timeout,
+                    )
+                else:
+                    self._run_sync(
+                        lambda oid=order_id: self._exchange.cancel_order(oid, self._market_symbol),
+                        timeout=self._sync_timeout,
+                    )
+
                 with self._orders_lock:
                     if order_id in self._orders_cache:
                         self._orders_cache[order_id].status = OrderStatus.CANCELLED
+
                 results.append(OrderResult(
                     success=True,
                     order_id=order_id,
                     status=OrderStatus.CANCELLED,
                 ))
-            self._log_debug("cancel_batch_orders success count=%s", len(results))
-            return results
-        except Exception as err:
-            self._log_warning("cancel_batch_orders error: %s", err)
-            return [
-                OrderResult(
+            except Exception as err:
+                self._log_warning("%s failed order_id=%s: %s", method_name, order_id, err)
+                results.append(OrderResult(
                     success=False,
                     order_id=order_id,
                     status=OrderStatus.FAILED,
                     error=str(err),
-                )
-                for order_id in order_ids
-            ]
+                ))
+
+        return results
 
     def get_order(self, order_id: str) -> Optional[ExchangeOrder]:
         """查询订单 - 优先使用WS缓存"""
