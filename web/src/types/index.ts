@@ -53,6 +53,11 @@ export interface StrategyCreate {
   worker_name?: string | null
 }
 
+export interface OrderDetail {
+  price: number
+  quantity: number
+}
+
 export interface StrategyStatus {
   strategy_id: number
   is_running: boolean
@@ -62,6 +67,8 @@ export interface StrategyStatus {
   current_price: number | null
   pending_buys: number
   pending_sells: number
+  buy_orders?: OrderDetail[]
+  sell_orders?: OrderDetail[]
   position_count: number
   target_price?: number
   buy_prices?: number[]
@@ -97,9 +104,12 @@ export interface RunningStrategy {
   current_price: number
   pending_buys: number
   pending_sells: number
+  buy_orders: OrderDetail[]
+  sell_orders: OrderDetail[]
   position_count: number
   started_at: number
   updated_at: number
+  last_error?: string | null
 }
 
 export interface Trade {

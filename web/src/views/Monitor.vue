@@ -5,12 +5,9 @@ import type { RunningStrategy, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import MonitorCard from '@/components/MonitorCard.vue'
 
-const ULTRA_COMPACT_STORAGE_KEY = 'monitor_ultra_compact_mode'
-
 const strategies = ref<RunningStrategy[]>([])
 const statusMap = ref<Map<number, StrategyStatus>>(new Map())
 const loading = ref(true)
-const ultraCompact = ref(true)
 let isFetching = false
 let pollTimer: number | null = null
 
@@ -45,9 +42,12 @@ async function fetchStrategies(options: { showLoading?: boolean } = {}) {
         current_price: item.current_price,
         pending_buys: item.pending_buys,
         pending_sells: item.pending_sells,
+        buy_orders: item.buy_orders ?? [],
+        sell_orders: item.sell_orders ?? [],
         position_count: item.position_count,
         started_at: item.started_at,
         updated_at: item.updated_at,
+        last_error: item.last_error ?? undefined,
       })
     })
   } finally {
@@ -99,27 +99,21 @@ function getStatus(id: number): StrategyStatus | null {
   return statusMap.value.get(id) || null
 }
 
-function handleCompactModeChange(value: boolean | string | number) {
-  const enabled = Boolean(value)
-  ultraCompact.value = enabled
-  window.localStorage.setItem(ULTRA_COMPACT_STORAGE_KEY, enabled ? '1' : '0')
-}
-
 const monitorCardStrategy = computed(() => {
   return runningStrategies.value.map(item => ({
     id: item.strategy_id,
     name: item.strategy_name,
     symbol: item.symbol,
     max_open_positions: item.max_open_positions,
+    grid_levels: item.grid_levels,
+    buy_price_deviation: item.buy_price_deviation,
+    sell_price_deviation: item.sell_price_deviation,
+    polling_interval: item.polling_interval,
+    price_tolerance: item.price_tolerance,
   }))
 })
 
 onMounted(async () => {
-  const savedMode = window.localStorage.getItem(ULTRA_COMPACT_STORAGE_KEY)
-  if (savedMode !== null) {
-    ultraCompact.value = savedMode === '1'
-  }
-
   await fetchStrategies({ showLoading: true })
   startPolling()
 })
@@ -133,19 +127,15 @@ onUnmounted(() => {
   <div>
     <div class="page-header monitor-header">
       <h2>实时监控</h2>
-      <div class="compact-toggle">
-        <span>超紧凑模式</span>
-        <el-switch :model-value="ultraCompact" @change="handleCompactModeChange" />
-      </div>
     </div>
 
-    <div v-loading="loading">
+    <div v-loading="loading" class="monitor-container">
       <MonitorCard
-        v-for="strategy in monitorCardStrategy"
+        v-for="(strategy, idx) in monitorCardStrategy"
         :key="strategy.id"
         :strategy="strategy"
         :status="getStatus(strategy.id)"
-        :ultra-compact="ultraCompact"
+        :index="idx + 1"
         @start="handleStart"
         @stop="handleStop"
       />
@@ -162,11 +152,9 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.compact-toggle {
+.monitor-container {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #606266;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 </style>

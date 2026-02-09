@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Monitor, WarningFilled } from '@element-plus/icons-vue'
-import type { StrategyStatus } from '@/types'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { WarningFilled } from '@element-plus/icons-vue'
+import type { StrategyStatus, RunningStrategy, OrderDetail } from '@/types'
 
 interface MonitorCardStrategy {
   id: number
   name: string
   symbol: string
   max_open_positions: number
+  grid_levels: number
+  buy_price_deviation: string
+  sell_price_deviation: string
+  polling_interval: string
+  price_tolerance: string
 }
 
 const props = defineProps<{
   strategy: MonitorCardStrategy
   status: StrategyStatus | null
-  ultraCompact?: boolean
+  index: number
 }>()
 
 const emit = defineEmits<{
@@ -22,21 +27,47 @@ const emit = defineEmits<{
 }>()
 
 const isRunning = computed(() => props.status?.is_running ?? false)
-const compactMode = computed(() => props.ultraCompact ?? false)
 
-const runTime = computed(() => {
+// 运行时间计时器
+const runTimeSeconds = ref(0)
+let runTimeTimer: number | null = null
+
+function updateRunTime() {
   const startTime = props.status?.start_timestamp || props.status?.started_at
-  if (!startTime) return '-'
-  const seconds = Math.floor(Date.now() / 1000 - startTime)
+  if (startTime) {
+    runTimeSeconds.value = Math.floor(Date.now() / 1000 - startTime)
+  }
+}
+
+const runTimeDisplay = computed(() => {
+  const seconds = runTimeSeconds.value
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
-  return `${hours}h ${minutes}m`
+  const secs = seconds % 60
+  return `${hours}h ${minutes}m ${secs}s`
 })
 
-const priceDeviation = computed(() => {
-  if (!props.status?.current_price || !props.status?.target_price) return null
-  const dev = ((props.status.current_price - props.status.target_price) / props.status.target_price) * 100
-  return dev.toFixed(2)
+// 更新时间（多少秒前）
+const updateTimeAgo = computed(() => {
+  if (!props.status?.updated_at) return '-'
+  const seconds = Math.floor(Date.now() / 1000 - props.status.updated_at)
+  if (seconds < 60) return `${seconds}s前`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m前`
+  return `${Math.floor(seconds / 3600)}h前`
+})
+
+// 挂单总价值
+const totalOrderValue = computed(() => {
+  const buyOrders = props.status?.buy_orders ?? []
+  const sellOrders = props.status?.sell_orders ?? []
+  let total = 0
+  buyOrders.forEach((o: OrderDetail) => {
+    total += o.price * o.quantity
+  })
+  sellOrders.forEach((o: OrderDetail) => {
+    total += o.price * o.quantity
+  })
+  return total
 })
 
 function formatPrice(price: number | null | undefined) {
@@ -44,27 +75,54 @@ function formatPrice(price: number | null | undefined) {
   return price.toLocaleString('en-US', { maximumFractionDigits: 8 })
 }
 
-function formatPriceList(prices: number[] | undefined) {
-  if (!prices || prices.length === 0) return '-'
-  const min = Math.min(...prices)
-  const max = Math.max(...prices)
-  return `$${formatPrice(min)} ~ $${formatPrice(max)}`
+function formatOrderValue(value: number) {
+  if (value >= 1000) {
+    return `$${(value / 1000).toFixed(2)}K`
+  }
+  return `$${value.toFixed(2)}`
 }
+
+// 计算挂单偏移百分比
+function calcOffset(orderPrice: number, currentPrice: number | null | undefined): string {
+  if (!currentPrice || currentPrice === 0) return ''
+  const offset = ((orderPrice - currentPrice) / currentPrice) * 100
+  const sign = offset >= 0 ? '+' : ''
+  return `(${sign}${offset.toFixed(2)}%)`
+}
+
+// 格式化挂单显示
+function formatOrderDisplay(order: OrderDetail, currentPrice: number | null | undefined): string {
+  const priceStr = `$${formatPrice(order.price)}`
+  const qtyStr = order.quantity.toString()
+  const offset = calcOffset(order.price, currentPrice)
+  return `${priceStr}@${qtyStr}${offset}`
+}
+
+onMounted(() => {
+  updateRunTime()
+  runTimeTimer = window.setInterval(updateRunTime, 1000)
+})
+
+onUnmounted(() => {
+  if (runTimeTimer !== null) {
+    clearInterval(runTimeTimer)
+    runTimeTimer = null
+  }
+})
 </script>
 
 <template>
   <div class="monitor-card">
+    <!-- 头部：编号+名称+交易对 + 状态+停止按钮 -->
     <div class="card-header">
       <div class="title">
+        <span class="index">#{{ index }}</span>
         <span class="title-text">{{ strategy.name }}</span>
-        <el-tag size="small" style="margin-left: 8px;">{{ strategy.symbol }}</el-tag>
+        <el-tag size="small" class="symbol-tag">{{ strategy.symbol }}</el-tag>
       </div>
       <div class="status">
         <span :class="['status-dot', isRunning ? 'running' : 'stopped']"></span>
-        <span>{{ isRunning ? '运行中' : '已停止' }}</span>
-        <span v-if="isRunning" class="run-time">
-          运行时长: {{ runTime }}
-        </span>
+        <span class="status-text">{{ isRunning ? '运行中' : '已停止' }}</span>
         <el-button
           v-if="isRunning"
           type="warning"
@@ -86,104 +144,91 @@ function formatPriceList(prices: number[] | undefined) {
       </div>
     </div>
 
-    <!-- 显示运行节点信息 -->
-    <div v-if="isRunning && status?.worker_ip && !compactMode" class="worker-info">
-      <el-icon><Monitor /></el-icon>
-      <span>运行节点: {{ status.worker_ip }}</span>
-      <el-tag v-if="status?.worker_hostname" size="small" type="info">{{ status.worker_hostname }}</el-tag>
+    <!-- 时间行：运行时间 + 更新时间 -->
+    <div v-if="isRunning" class="time-row">
+      <span>运行: {{ runTimeDisplay }}</span>
+      <span class="separator">|</span>
+      <span>更新: {{ updateTimeAgo }}</span>
     </div>
 
-    <div class="card-body">
-      <div class="price-info" :class="{ compact: compactMode }">
-        <div class="info-item">
-          <div class="label">当前价格</div>
-          <div class="value">${{ formatPrice(status?.current_price) }}</div>
-        </div>
-        <div class="info-item">
-          <div class="label">目标价格</div>
-          <div class="value">${{ formatPrice(status?.target_price) }}</div>
-        </div>
-        <div class="info-item">
-          <div class="label">价格偏差</div>
-          <div class="value" :class="priceDeviation && parseFloat(priceDeviation) >= 0 ? 'positive' : 'negative'">
-            {{ priceDeviation ? `${parseFloat(priceDeviation) >= 0 ? '+' : ''}${priceDeviation}%` : '-' }}
-          </div>
-        </div>
+    <!-- 价格行 -->
+    <div class="price-row">
+      <div class="price-item">
+        <span class="label">现价:</span>
+        <span class="value price">${{ formatPrice(status?.current_price) }}</span>
       </div>
-
-      <div v-if="compactMode" class="compact-summary">
-        <span class="summary-item">买单: {{ status?.pending_buys ?? 0 }}</span>
-        <span class="summary-item">卖单: {{ status?.pending_sells ?? 0 }}</span>
-        <span class="summary-item">持仓: {{ status?.position_count ?? 0 }}/{{ strategy.max_open_positions }}</span>
-        <span v-if="status?.worker_hostname" class="summary-item muted">{{ status.worker_hostname }}</span>
-      </div>
-
-      <div v-else class="orders-section">
-        <div class="order-box buy">
-          <div class="box-title">买单挂单</div>
-          <div class="box-content">
-            <div class="stat-row">
-              <span class="label">数量:</span>
-              <span class="value">{{ status?.pending_buys ?? 0 }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="label">价格区间:</span>
-              <span class="value">{{ formatPriceList(status?.buy_prices) }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="label">平均偏差:</span>
-              <span class="value">
-                {{ status?.buy_avg_diff_percent !== undefined ? `${status.buy_avg_diff_percent.toFixed(2)}%` : '-' }}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div class="order-box sell">
-          <div class="box-title">卖单挂单</div>
-          <div class="box-content">
-            <div class="stat-row">
-              <span class="label">数量:</span>
-              <span class="value">{{ status?.pending_sells ?? 0 }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="label">价格区间:</span>
-              <span class="value">{{ formatPriceList(status?.sell_prices) }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="label">平均偏差:</span>
-              <span class="value">
-                {{ status?.sell_avg_diff_percent !== undefined ? `+${status.sell_avg_diff_percent.toFixed(2)}%` : '-' }}
-              </span>
-            </div>
-          </div>
-        </div>
+      <div class="price-item">
+        <span class="label">挂单总值:</span>
+        <span class="value">{{ formatOrderValue(totalOrderValue) }}</span>
       </div>
     </div>
 
-    <div v-if="!compactMode || status?.last_error" class="card-footer" :class="{ compact: compactMode }">
-      <div class="footer-item">
-        <span class="label">持仓数:</span>
-        <span class="value">{{ status?.position_count ?? 0 }}/{{ strategy.max_open_positions }}</span>
+    <!-- 挂单详情 -->
+    <div class="orders-section">
+      <div class="order-line buy">
+        <span class="order-label">买单({{ status?.pending_buys ?? 0 }}):</span>
+        <span v-if="!status?.buy_orders?.length" class="order-empty">-</span>
+        <span v-else class="order-list">
+          <span
+            v-for="(order, idx) in status.buy_orders.slice(0, 3)"
+            :key="idx"
+            class="order-item"
+          >
+            {{ formatOrderDisplay(order, status?.current_price) }}
+          </span>
+          <span v-if="status.buy_orders.length > 3">...</span>
+        </span>
       </div>
-      <div v-if="status?.last_error" class="footer-item error">
-        <el-icon><WarningFilled /></el-icon>
-        <span>{{ status.last_error }}</span>
+      <div class="order-line sell">
+        <span class="order-label">卖单({{ status?.pending_sells ?? 0 }}):</span>
+        <span v-if="!status?.sell_orders?.length" class="order-empty">-</span>
+        <span v-else class="order-list">
+          <span
+            v-for="(order, idx) in status.sell_orders.slice(0, 3)"
+            :key="idx"
+            class="order-item"
+          >
+            {{ formatOrderDisplay(order, status?.current_price) }}
+          </span>
+          <span v-if="status.sell_orders.length > 3">...</span>
+        </span>
       </div>
+    </div>
+
+    <!-- 错误信息 -->
+    <div v-if="status?.last_error" class="error-row">
+      <el-icon><WarningFilled /></el-icon>
+      <span class="error-text">{{ status.last_error }}</span>
+    </div>
+
+    <!-- 底部参数 -->
+    <div class="params-row">
+      <span>持仓:{{ status?.position_count ?? 0 }}/{{ strategy.max_open_positions }}</span>
+      <span class="separator">|</span>
+      <span>网格:{{ strategy.grid_levels }}</span>
+      <span class="separator">|</span>
+      <span>买偏:{{ strategy.buy_price_deviation }}%</span>
+      <span class="separator">|</span>
+      <span>卖偏:{{ strategy.sell_price_deviation }}%</span>
+      <span class="separator">|</span>
+      <span>间隔:{{ strategy.polling_interval }}s</span>
+      <span class="separator">|</span>
+      <span>容差:{{ strategy.price_tolerance }}%</span>
     </div>
   </div>
 </template>
 
 <style scoped>
 .monitor-card {
+  width: 480px;
   background: #fff;
   border-radius: 6px;
-  margin-bottom: 12px;
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.08);
+  padding: 12px 16px;
+  min-height: 180px;
 }
 
 .card-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid #ebeef5;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -194,20 +239,28 @@ function formatPriceList(prices: number[] | undefined) {
 .title {
   display: flex;
   align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
+}
+
+.index {
+  color: #909399;
+  font-weight: 500;
 }
 
 .title-text {
   line-height: 1.2;
 }
 
+.symbol-tag {
+  margin-left: 4px;
+}
+
 .status {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  gap: 8px;
   font-size: 13px;
   color: #606266;
 }
@@ -226,145 +279,122 @@ function formatPriceList(prices: number[] | undefined) {
   background-color: #f56c6c;
 }
 
-.run-time {
-  color: #909399;
+.status-text {
+  font-size: 13px;
 }
 
 .action-btn {
   margin-left: 4px;
 }
 
-.worker-info {
-  padding: 6px 16px;
-  background: #f0f9eb;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.time-row {
+  margin-top: 6px;
   font-size: 12px;
-  color: #67c23a;
+  color: #909399;
+}
+
+.separator {
+  margin: 0 6px;
+  color: #dcdfe6;
+}
+
+.price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding: 8px 0;
+  border-top: 1px solid #ebeef5;
   border-bottom: 1px solid #ebeef5;
 }
 
-.card-body {
-  padding: 14px 16px;
-}
-
-.price-info {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.price-info.compact {
-  margin-bottom: 8px;
-}
-
-.info-item .label {
-  font-size: 11px;
-  color: #909399;
-  margin-bottom: 2px;
-}
-
-.info-item .value {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.info-item .value.positive {
-  color: #67c23a;
-}
-
-.info-item .value.negative {
-  color: #f56c6c;
-}
-
-.orders-section {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.compact-summary {
+.price-item {
   display: flex;
   align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: #303133;
-  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.summary-item {
+.price-item .label {
+  font-size: 13px;
+  color: #909399;
+}
+
+.price-item .value {
+  font-size: 14px;
   font-weight: 500;
 }
 
-.summary-item.muted {
-  color: #909399;
-  font-weight: 400;
-}
-
-.order-box {
-  background: #f5f7fa;
-  border-radius: 5px;
-  padding: 10px 12px;
-}
-
-.order-box.buy {
-  border-left: 3px solid #67c23a;
-}
-
-.order-box.sell {
-  border-left: 3px solid #f56c6c;
-}
-
-.box-title {
-  font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-
-.stat-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-
-.stat-row .label {
-  color: #909399;
-}
-
-.stat-row:last-child {
-  margin-bottom: 0;
-}
-
-.card-footer {
-  padding: 10px 16px;
-  background: #fafafa;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  border-radius: 0 0 6px 6px;
-}
-
-.card-footer.compact {
-  padding: 8px 16px;
-}
-
-.footer-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.footer-item .value {
+.price-item .value.price {
+  font-size: 16px;
   font-weight: 600;
 }
 
-.footer-item.error {
+.orders-section {
+  margin-top: 10px;
+}
+
+.order-line {
+  font-size: 12px;
+  line-height: 1.6;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.order-line.buy {
+  color: #67c23a;
+}
+
+.order-line.sell {
   color: #f56c6c;
+}
+
+.order-label {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.order-empty {
+  color: #c0c4cc;
+}
+
+.order-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.order-item {
+  white-space: nowrap;
+}
+
+.error-row {
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: #fef0f0;
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #f56c6c;
+}
+
+.error-text {
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.params-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #ebeef5;
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.6;
+}
+
+.params-row .separator {
+  margin: 0 4px;
 }
 </style>

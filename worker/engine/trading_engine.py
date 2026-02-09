@@ -701,11 +701,23 @@ class TradingEngine:
         self._last_status_update_time = now
 
         with self._lock:
+            # 构建挂单详情列表：[{price, quantity}, ...]
+            buy_orders = [
+                {"price": o.price, "quantity": o.quantity}
+                for o in self._pending_buys.values()
+            ]
+            sell_orders = [
+                {"price": o.price, "quantity": o.quantity}
+                for o in self._pending_sells.values()
+            ]
+
             status = {
                 "current_price": self._current_price,
                 "pending_buys": len(self._pending_buys),
                 "pending_sells": len(self._pending_sells),
                 "position_count": self.position_tracker.get_position_count(),
+                "buy_orders": buy_orders,
+                "sell_orders": sell_orders,
             }
 
         try:

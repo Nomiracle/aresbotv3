@@ -115,6 +115,8 @@ class RedisClient:
         pending_buys: int = None,
         pending_sells: int = None,
         position_count: int = None,
+        buy_orders: list = None,
+        sell_orders: list = None,
         last_error: str = None,
         status: str = None,
     ) -> None:
@@ -130,6 +132,10 @@ class RedisClient:
             update_data["pending_sells"] = pending_sells
         if position_count is not None:
             update_data["position_count"] = position_count
+        if buy_orders is not None:
+            update_data["buy_orders"] = json.dumps(buy_orders)
+        if sell_orders is not None:
+            update_data["sell_orders"] = json.dumps(sell_orders)
         if last_error is not None:
             update_data["last_error"] = last_error
         if status is not None:
@@ -160,6 +166,16 @@ class RedisClient:
         except json.JSONDecodeError:
             runtime_config = {}
 
+        try:
+            buy_orders = json.loads(info.get("buy_orders", "[]") or "[]")
+        except json.JSONDecodeError:
+            buy_orders = []
+
+        try:
+            sell_orders = json.loads(info.get("sell_orders", "[]") or "[]")
+        except json.JSONDecodeError:
+            sell_orders = []
+
         return {
             "task_id": info.get("task_id", ""),
             "worker_ip": info.get("worker_ip", ""),
@@ -184,6 +200,8 @@ class RedisClient:
             "current_price": float(info.get("current_price", 0)),
             "pending_buys": int(info.get("pending_buys", 0)),
             "pending_sells": int(info.get("pending_sells", 0)),
+            "buy_orders": buy_orders,
+            "sell_orders": sell_orders,
             "position_count": int(info.get("position_count", 0)),
             "last_error": info.get("last_error", ""),
             "updated_at": int(info.get("updated_at", 0)),

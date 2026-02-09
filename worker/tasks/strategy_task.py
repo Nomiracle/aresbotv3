@@ -46,6 +46,8 @@ def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, An
         pending_buys=status.get("pending_buys"),
         pending_sells=status.get("pending_sells"),
         position_count=status.get("position_count"),
+        buy_orders=status.get("buy_orders"),
+        sell_orders=status.get("sell_orders"),
     )
 
 

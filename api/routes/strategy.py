@@ -84,6 +84,11 @@ class StrategyStatusResponse(BaseModel):
     updated_at: Optional[int] = None
 
 
+class OrderDetail(BaseModel):
+    price: float
+    quantity: float
+
+
 class RunningStrategyResponse(BaseModel):
     strategy_id: int
     task_id: str
@@ -106,9 +111,12 @@ class RunningStrategyResponse(BaseModel):
     current_price: float
     pending_buys: int
     pending_sells: int
+    buy_orders: list[OrderDetail] = []
+    sell_orders: list[OrderDetail] = []
     position_count: int
     started_at: int
     updated_at: int
+    last_error: Optional[str] = None
 
 
 def strategy_to_response(strategy: Strategy) -> StrategyResponse:
@@ -222,9 +230,12 @@ async def get_running_strategies(
             current_price=info["current_price"],
             pending_buys=info["pending_buys"],
             pending_sells=info["pending_sells"],
+            buy_orders=[OrderDetail(**o) for o in info.get("buy_orders", [])],
+            sell_orders=[OrderDetail(**o) for o in info.get("sell_orders", [])],
             position_count=info["position_count"],
             started_at=info["started_at"],
             updated_at=info["updated_at"],
+            last_error=info.get("last_error") or None,
         )
         for info in running
         if info.get("status") == "running"
