@@ -40,6 +40,8 @@ class _SharedWsContext:
     log_prefix: str
     exchange: Any
     sync_timeout: float
+    # Reference count for this context
+    ref_count: int = 0
     # callbacks keyed by subscriber_id, each has symbol info
     callbacks: Dict[int, _WsCallbacks] = field(default_factory=dict)
     loop: Optional[asyncio.AbstractEventLoop] = None
@@ -198,6 +200,9 @@ class BinanceSpot(BaseExchange):
         with cls._shared_lock:
             context = cls._shared_contexts.get(key)
             if context is not None:
+                # Increment reference count
+                context.ref_count += 1
+                logger.debug("%s reusing shared context, ref_count=%d", log_prefix, context.ref_count)
                 return context
 
             secret_preview = cls._mask_credential(api_secret, keep_prefix=4, keep_suffix=4)
@@ -214,6 +219,7 @@ class BinanceSpot(BaseExchange):
                 log_prefix=log_prefix,
                 exchange=exchange,
                 sync_timeout=sync_timeout,
+                ref_count=1,  # Initialize reference count
             )
             context.thread = threading.Thread(
                 target=cls._run_shared_loop,
@@ -223,7 +229,7 @@ class BinanceSpot(BaseExchange):
             )
             cls._shared_contexts[key] = context
             context.thread.start()
-            logger.info("%s shared ws thread started: %s", log_prefix, context.thread.name)
+            logger.info("%s shared ws thread started: %s ref_count=1", log_prefix, context.thread.name)
             return context
 
     def _register_callbacks(self) -> None:
@@ -292,8 +298,12 @@ class BinanceSpot(BaseExchange):
     def _finalize_instance(cls, key: SharedKey, subscriber_id: int, symbol: str) -> None:
         with cls._shared_lock:
             context = cls._shared_contexts.get(key)
-        if context is None:
-            return
+            if context is None:
+                return
+
+            # Decrement reference count
+            context.ref_count -= 1
+            remaining_refs = context.ref_count
 
         with context.lock:
             context.callbacks.pop(subscriber_id, None)
@@ -304,12 +314,25 @@ class BinanceSpot(BaseExchange):
             if not symbol_still_needed:
                 context.subscribed_symbols.discard(symbol)
 
-            has_callbacks = bool(context.callbacks)
-            if has_callbacks:
-                return
+        logger.debug(
+            "%s finalize subscriber=%d symbol=%s ref_count=%d",
+            context.log_prefix,
+            subscriber_id,
+            symbol,
+            remaining_refs,
+        )
+
+        # Only cleanup when reference count reaches 0
+        if remaining_refs > 0:
+            return
+
+        # Mark as not running and get loop/thread references
+        with context.lock:
             context.running = False
             loop = context.loop
             thread = context.thread
+
+        logger.info("%s ref_count=0, shutting down shared context", context.log_prefix)
 
         # Try to shutdown gracefully if loop is still running
         if loop is not None and loop.is_running():
@@ -328,6 +351,7 @@ class BinanceSpot(BaseExchange):
             current = cls._shared_contexts.get(key)
             if current is context:
                 cls._shared_contexts.pop(key, None)
+                logger.info("%s shared context removed from cache", context.log_prefix)
 
     @classmethod
     def _dispatch_price(cls, context: _SharedWsContext, symbol: str, price: float) -> None:
