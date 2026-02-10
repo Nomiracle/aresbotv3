@@ -33,6 +33,7 @@ _GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 _CLOB_HOST = "https://clob.polymarket.com"
 _CHAIN_ID = 137
 _MARKET_PERIOD_SECONDS = 15 * 60
+_BALANCE_SCALE = 1_000_000
 
 
 class PolymarketUpDown15m(BaseExchange):
@@ -289,8 +290,8 @@ class PolymarketUpDown15m(BaseExchange):
             market = events[0].get("markets", [{}])[0]
             self._condition_id = market.get("conditionId") or market.get("condition_id")
 
-            clob_token_ids = json.loads(market.get("clobTokenIds", "[]"))
-            outcomes = json.loads(market.get("outcomes", "[]"))
+            clob_token_ids = _safe_json_list(market.get("clobTokenIds"))
+            outcomes = _safe_json_list(market.get("outcomes"))
 
             # 查找匹配的outcome token
             for i, outcome in enumerate(outcomes):
@@ -423,10 +424,30 @@ class PolymarketUpDown15m(BaseExchange):
     def _get_token_balance(self, token_id: str) -> float:
         """查询指定token的可用余额."""
         try:
-            balance = self._client.get_balance_allowance(token_id)
+            balance = None
+
+            # py-clob-client 版本差异：有的版本要求 BalanceAllowanceParams。
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+
+                params = BalanceAllowanceParams(
+                    asset_type=AssetType.CONDITIONAL,
+                    token_id=token_id,
+                )
+                balance = self._client.get_balance_allowance(params)
+            except Exception:
+                balance = self._client.get_balance_allowance(token_id)
+
             if isinstance(balance, dict):
-                return float(balance.get("balance", 0))
-            return float(balance or 0)
+                raw = balance.get("balance", 0)
+            else:
+                raw = balance or 0
+
+            value = float(raw)
+            # 余额通常是 1e6 精度（参考 v1 实现），做一个保守的缩放。
+            if value >= _BALANCE_SCALE:
+                return value / _BALANCE_SCALE
+            return value
         except Exception:
             return 0.0
 
@@ -505,3 +526,17 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_json_list(value: Any) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
