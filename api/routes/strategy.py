@@ -242,7 +242,7 @@ async def get_running_strategies(
     ]
 
 
-@router.get("/{strategy_id}", response_model=StrategyResponse)
+@router.get("/{strategy_id:int}", response_model=StrategyResponse)
 async def get_strategy(
     strategy_id: int,
     user_email: str = Depends(get_current_user),
@@ -254,7 +254,7 @@ async def get_strategy(
     return strategy_to_response(strategy)
 
 
-@router.put("/{strategy_id}", response_model=StrategyResponse)
+@router.put("/{strategy_id:int}", response_model=StrategyResponse)
 async def update_strategy(
     strategy_id: int,
     data: StrategyUpdate,
@@ -276,7 +276,7 @@ async def update_strategy(
     return strategy_to_response(strategy)
 
 
-@router.delete("/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{strategy_id:int}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_strategy(
     strategy_id: int,
     user_email: str = Depends(get_current_user),
@@ -299,7 +299,7 @@ class StartStrategyRequest(BaseModel):
     worker_name: Optional[str] = None
 
 
-@router.post("/{strategy_id}/start", response_model=StrategyStatusResponse)
+@router.post("/{strategy_id:int}/start", response_model=StrategyStatusResponse)
 async def start_strategy(
     strategy_id: int,
     request: Optional[StartStrategyRequest] = None,
@@ -381,7 +381,7 @@ async def start_strategy(
     )
 
 
-@router.post("/{strategy_id}/stop", response_model=StrategyStatusResponse)
+@router.post("/{strategy_id:int}/stop", response_model=StrategyStatusResponse)
 async def stop_strategy(
     strategy_id: int,
     user_email: str = Depends(get_current_user),
@@ -409,7 +409,7 @@ async def stop_strategy(
     return StrategyStatusResponse(strategy_id=strategy_id, is_running=False)
 
 
-@router.get("/{strategy_id}/status", response_model=StrategyStatusResponse)
+@router.get("/{strategy_id:int}/status", response_model=StrategyStatusResponse)
 async def get_strategy_status(
     strategy_id: int,
     user_email: str = Depends(get_current_user),
@@ -573,7 +573,7 @@ async def batch_delete_strategies(
     return BatchResult(success=success, failed=failed)
 
 
-@router.post("/{strategy_id}/copy", response_model=StrategyResponse)
+@router.post("/{strategy_id:int}/copy", response_model=StrategyResponse)
 async def copy_strategy(
     strategy_id: int,
     user_email: str = Depends(get_current_user),
