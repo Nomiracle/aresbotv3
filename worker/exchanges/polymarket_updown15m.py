@@ -435,8 +435,7 @@ class PolymarketUpDown15m(BaseExchange):
                 token_id=self._token_id,
             )
             signed = self._client.create_order(order_args)
-            # py-clob-client 版本差异：部分版本使用 post_order(order, order_type) 的位置参数。
-            self._client.post_order(signed, OrderType.FOK)
+            self._post_order(signed, OrderType.FOK)
             logger.info("%s liquidated position qty=%s", self.log_prefix, balance)
         except Exception as e:
             logger.warning("%s liquidate position failed: %s", self.log_prefix, e)
@@ -488,12 +487,20 @@ class PolymarketUpDown15m(BaseExchange):
             token_id=self._token_id,
         )
         signed = self._client.create_order(order_args)
-        # py-clob-client 版本差异：部分版本使用 post_order(order, order_type) 的位置参数。
-        resp = self._client.post_order(signed, OrderType.GTC)
+        resp = self._post_order(signed, OrderType.GTC)
 
         if isinstance(resp, dict):
             return resp
         raise RuntimeError(f"unexpected order response: {resp}")
+
+    def _post_order(self, signed_order: Any, order_type: OrderType) -> Any:
+        """兼容不同 py-clob-client 版本的 post_order 签名."""
+        try:
+            # 常见版本：post_order(order, OrderType)
+            return self._client.post_order(signed_order, order_type)
+        except TypeError:
+            # 部分版本：post_order(order, order_type=OrderType)
+            return self._client.post_order(signed_order, order_type=order_type)
 
     # ── 订单标准化 ────────────────────────────────────────────────
 
