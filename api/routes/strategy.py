@@ -160,6 +160,66 @@ def _ensure_worker_available(worker_name: Optional[str]) -> None:
         )
 
 
+def _ensure_worker_capacity(worker_name: Optional[str]) -> None:
+    """Validate the target worker has free capacity.
+
+    If *worker_name* is None the task goes to the default queue; capacity
+    is only checked when a specific worker is requested.
+    """
+    if not worker_name:
+        return
+
+    workers = get_active_workers()
+    for w in workers:
+        if w["name"] == worker_name:
+            concurrency = int(w.get("concurrency") or 0)
+            active = int(w.get("active_tasks") or 0)
+            if concurrency > 0 and active >= concurrency:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Worker {worker_name} 已满载（{active}/{concurrency}），"
+                        f"请先停止该节点上的某个策略，或将此策略分配到其他 Worker 节点"
+                    ),
+                )
+            return
+
+    # Worker not found in active list — fall through to online check
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"指定 Worker 不在线: {worker_name}",
+    )
+
+
+def _ensure_no_duplicate_symbol(
+    strategy: Strategy,
+    account_exchange: str,
+    user_email: str,
+) -> None:
+    """Prevent running two strategies on the same exchange + symbol."""
+    redis_client = get_redis_client()
+    running = redis_client.get_all_running_strategies(user_email=user_email)
+
+    for info in running:
+        if info.get("status") != "running":
+            continue
+        if info.get("strategy_id") == strategy.id:
+            continue
+        # 同交易所 + 同交易对 = 冲突
+        if (
+            info.get("exchange") == account_exchange
+            and info.get("symbol") == strategy.symbol
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"同交易所 {account_exchange} 下已有策略在运行交易对 {strategy.symbol}"
+                    f"（策略 #{info['strategy_id']}），"
+                    f"请先停止该策略，或更换为不同的交易对 / 交易所账户"
+                ),
+            )
+
+
 @router.get("", response_model=List[StrategyResponse])
 async def list_strategies(
     user_email: str = Depends(get_current_user),
@@ -320,6 +380,9 @@ async def start_strategy(
     if _is_strategy_running(strategy_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Strategy already running")
 
+    # 同交易所同交易对校验
+    _ensure_no_duplicate_symbol(strategy, account.exchange, user_email)
+
     # Prepare account data for Celery task
     account_data = {
         "api_key": account.api_key,
@@ -345,6 +408,7 @@ async def start_strategy(
     # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
     _ensure_worker_available(worker_name)
+    _ensure_worker_capacity(worker_name)
 
     strategy_runtime = {
         "user_email": user_email,
@@ -362,6 +426,7 @@ async def start_strategy(
             "max_open_positions": strategy.max_open_positions,
             "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             "worker_name": worker_name,
+            "exchange": account.exchange,
         },
         "runtime_config": strategy_config,
     }
@@ -476,6 +541,7 @@ async def batch_start_strategies(
             if not account or not account.is_active or _is_strategy_running(sid):
                 failed.append(sid)
                 continue
+            _ensure_no_duplicate_symbol(strategy, account.exchange, user_email)
             account_data = {"api_key": account.api_key, "api_secret": account.api_secret, "testnet": account.testnet}
             strategy_config = {
                 "symbol": strategy.symbol,
@@ -491,6 +557,7 @@ async def batch_start_strategies(
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             }
             _ensure_worker_available(strategy.worker_name)
+            _ensure_worker_capacity(strategy.worker_name)
             strategy_runtime = {
                 "user_email": user_email,
                 "strategy_snapshot": {
@@ -507,6 +574,7 @@ async def batch_start_strategies(
                     "max_open_positions": strategy.max_open_positions,
                     "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                     "worker_name": strategy.worker_name,
+                    "exchange": account.exchange,
                 },
                 "runtime_config": strategy_config,
             }

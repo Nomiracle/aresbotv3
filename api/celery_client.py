@@ -57,6 +57,7 @@ def get_active_workers() -> List[Dict]:
     inspect = celery_app.control.inspect()
     ping_result = inspect.ping() or {}
     stats_result = inspect.stats() or {}
+    active_result = inspect.active() or {}
     redis_client = get_redis_client()
 
     workers = []
@@ -72,7 +73,7 @@ def get_active_workers() -> List[Dict]:
             'hostname': hostname,
             'ip': worker_ip,
             'concurrency': stats.get('pool', {}).get('max-concurrency', 0),
-            'active_tasks': len(stats.get('pool', {}).get('processes', [])),
+            'active_tasks': len(active_result.get(worker_name, [])),
         })
     return workers
 
