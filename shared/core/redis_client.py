@@ -94,6 +94,9 @@ class RedisClient:
         task_id: str,
         worker_ip: str,
         worker_hostname: str,
+        worker_private_ip: str = "",
+        worker_public_ip: str = "",
+        worker_ip_location: str = "",
         status: str = "running",
         user_email: Optional[str] = None,
         strategy_snapshot: Optional[Dict[str, Any]] = None,
@@ -108,6 +111,9 @@ class RedisClient:
             "task_id": task_id,
             "worker_ip": worker_ip,
             "worker_hostname": worker_hostname,
+            "worker_private_ip": worker_private_ip,
+            "worker_public_ip": worker_public_ip,
+            "worker_ip_location": worker_ip_location,
             "status": status,
             "user_email": user_email or "",
             "strategy_name": str(snapshot.get("strategy_name") or ""),
@@ -283,6 +289,9 @@ class RedisClient:
             "task_id": info.get("task_id", ""),
             "worker_ip": info.get("worker_ip", ""),
             "worker_hostname": info.get("worker_hostname", ""),
+            "worker_private_ip": info.get("worker_private_ip", ""),
+            "worker_public_ip": info.get("worker_public_ip", ""),
+            "worker_ip_location": info.get("worker_ip_location", ""),
             "status": info.get("status", ""),
             "user_email": info.get("user_email", ""),
             "strategy_name": info.get("strategy_name", ""),
@@ -364,14 +373,25 @@ class RedisClient:
 
         return False
 
-    def register_worker(self, worker_id: str, ip: str = "", hostname: str = "") -> None:
+    def register_worker(
+        self,
+        worker_id: str,
+        ip: str = "",
+        hostname: str = "",
+        private_ip: str = "",
+        public_ip: str = "",
+        ip_location: str = "",
+    ) -> None:
         """Register a worker as active with its info."""
         self._client.sadd(self.WORKERS_KEY, worker_id)
-        if ip or hostname:
+        if ip or hostname or private_ip or public_ip or ip_location:
             key = f"{self.WORKER_INFO_PREFIX}{worker_id}"
             self._client.hset(key, mapping={
                 "ip": ip,
                 "hostname": hostname,
+                "private_ip": private_ip,
+                "public_ip": public_ip,
+                "ip_location": ip_location,
                 "registered_at": int(time.time()),
             })
             self._client.expire(key, 86400)  # 24 hours TTL
@@ -390,6 +410,9 @@ class RedisClient:
         return {
             "ip": info.get("ip", ""),
             "hostname": info.get("hostname", ""),
+            "private_ip": info.get("private_ip", ""),
+            "public_ip": info.get("public_ip", ""),
+            "ip_location": info.get("ip_location", ""),
             "registered_at": int(info.get("registered_at", 0)),
         }
 
@@ -403,9 +426,13 @@ class RedisClient:
         result = []
         for worker_id in worker_ids:
             info = self.get_worker_info(worker_id) or {}
+            preferred_ip = info.get("public_ip") or info.get("ip", "")
             result.append({
                 "name": worker_id,
-                "ip": info.get("ip", ""),
+                "ip": preferred_ip,
+                "private_ip": info.get("private_ip", ""),
+                "public_ip": info.get("public_ip", ""),
+                "ip_location": info.get("ip_location", ""),
                 "hostname": info.get("hostname", worker_id.split("@")[-1] if "@" in worker_id else worker_id),
             })
         return result

@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 import json
 import signal
-import socket
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -18,6 +17,7 @@ from worker.core.base_strategy import StrategyConfig
 from shared.core.redis_client import get_redis_client
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
+from shared.utils.network import get_worker_network_identity
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
@@ -36,6 +36,9 @@ class TaskRuntime:
     task_id: str
     worker_ip: str
     worker_hostname: str
+    worker_private_ip: str
+    worker_public_ip: str
+    worker_ip_location: str
 
 
 class StrategyStopWatcher:
@@ -193,18 +196,6 @@ def _should_stop_task(redis_client, strategy_id: int, task_id: str) -> bool:
     return redis_client.should_stop_strategy_task(strategy_id=strategy_id, task_id=task_id)
 
 
-def get_worker_ip() -> str:
-    """Get the IP address of the current worker."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return socket.gethostbyname(socket.gethostname())
-
-
 def _is_task_active(task_id: str) -> bool:
     """Check whether a Celery task is still active/reserved/scheduled."""
     if not task_id:
@@ -264,11 +255,15 @@ def run_strategy(
     Returns:
         Task result with execution statistics
     """
+    network_identity = get_worker_network_identity()
     runtime = TaskRuntime(
         strategy_id=strategy_id,
         task_id=self.request.id,
-        worker_ip=get_worker_ip(),
-        worker_hostname=socket.gethostname(),
+        worker_ip=network_identity.worker_ip,
+        worker_hostname=network_identity.hostname,
+        worker_private_ip=network_identity.private_ip,
+        worker_public_ip=network_identity.public_ip,
+        worker_ip_location=network_identity.ip_location,
     )
     previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
 
@@ -317,6 +312,9 @@ def run_strategy(
         task_id=runtime.task_id,
         worker_ip=runtime.worker_ip,
         worker_hostname=runtime.worker_hostname,
+        worker_private_ip=runtime.worker_private_ip,
+        worker_public_ip=runtime.worker_public_ip,
+        worker_ip_location=runtime.worker_ip_location,
         status="running",
         user_email=runtime_data.get("user_email"),
         strategy_snapshot=runtime_data.get("strategy_snapshot", {}),

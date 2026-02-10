@@ -12,6 +12,10 @@ router = APIRouter()
 class WorkerInfo(BaseModel):
     name: str
     hostname: str
+    ip: str = ""
+    private_ip: str = ""
+    public_ip: str = ""
+    ip_location: str = ""
     concurrency: int
     active_tasks: int
 

@@ -1,7 +1,6 @@
 """Celery application configuration."""
 import logging
 import os
-import socket
 import sys
 
 # 添加项目根目录到 Python 路径
@@ -19,6 +18,7 @@ from celery.signals import (
 )
 
 from shared.utils.crypto import init_encryption
+from shared.utils.network import get_worker_network_identity
 
 
 def _init_encryption():
@@ -32,18 +32,6 @@ def _init_encryption():
                 encryption_key = config.get("security", {}).get("encryption_key", "")
     if encryption_key:
         init_encryption(encryption_key)
-
-
-def _get_worker_ip() -> str:
-    """Get the IP address of the current worker."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return socket.gethostbyname(socket.gethostname())
 
 
 def _configure_ccxt_logger() -> None:
@@ -159,13 +147,24 @@ def on_after_setup_task_logger(logger, *args, **kwargs):
 def on_worker_ready(sender, **kwargs):
     """Register worker when it's ready."""
     from shared.core.redis_client import get_redis_client
+
     worker_name = os.environ.get("WORKER_NAME") or sender.hostname
-    worker_ip = _get_worker_ip()
-    hostname = socket.gethostname()
+    identity = get_worker_network_identity(force_refresh=True)
 
     redis_client = get_redis_client()
-    redis_client.register_worker(worker_name, ip=worker_ip, hostname=hostname)
-    print(f"Worker {worker_name} registered with IP {worker_ip}")
+    redis_client.register_worker(
+        worker_name,
+        ip=identity.worker_ip,
+        hostname=identity.hostname,
+        private_ip=identity.private_ip,
+        public_ip=identity.public_ip,
+        ip_location=identity.ip_location,
+    )
+    print(
+        f"Worker {worker_name} registered: "
+        f"egress={identity.public_ip or '-'} private={identity.private_ip or '-'} "
+        f"location={identity.ip_location or '-'}"
+    )
 
 
 @worker_shutdown.connect

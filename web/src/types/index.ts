@@ -64,6 +64,9 @@ export interface StrategyStatus {
   task_id?: string
   worker_name?: string
   worker_ip?: string
+  worker_private_ip?: string
+  worker_public_ip?: string
+  worker_ip_location?: string
   worker_hostname?: string
   current_price: number | null
   pending_buys: number
@@ -100,6 +103,9 @@ export interface RunningStrategy {
   max_daily_drawdown?: string | null
   worker_name?: string | null
   worker_ip: string
+  worker_private_ip: string
+  worker_public_ip: string
+  worker_ip_location: string
   worker_hostname: string
   status: string
   current_price: number

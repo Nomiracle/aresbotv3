@@ -61,17 +61,22 @@ def get_active_workers() -> List[Dict]:
     redis_client = get_redis_client()
 
     workers = []
-    for worker_name, ping_data in ping_result.items():
+    for worker_name in ping_result:
         stats = stats_result.get(worker_name, {})
         # 从 Redis 获取 worker 详细信息
         worker_info = redis_client.get_worker_info(worker_name) or {}
         # worker_name format: worker@hostname
         hostname = worker_info.get("hostname") or (worker_name.split('@')[-1] if '@' in worker_name else worker_name)
-        worker_ip = worker_info.get("ip", "")
+        worker_public_ip = worker_info.get("public_ip", "")
+        worker_private_ip = worker_info.get("private_ip", "")
+        worker_ip = worker_public_ip or worker_info.get("ip", "") or worker_private_ip
         workers.append({
             'name': worker_name,
             'hostname': hostname,
             'ip': worker_ip,
+            'private_ip': worker_private_ip,
+            'public_ip': worker_public_ip,
+            'ip_location': worker_info.get("ip_location", ""),
             'concurrency': stats.get('pool', {}).get('max-concurrency', 0),
             'active_tasks': len(active_result.get(worker_name, [])),
         })

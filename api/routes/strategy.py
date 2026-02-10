@@ -75,6 +75,9 @@ class StrategyStatusResponse(BaseModel):
     is_running: bool
     task_id: Optional[str] = None
     worker_ip: Optional[str] = None
+    worker_private_ip: Optional[str] = None
+    worker_public_ip: Optional[str] = None
+    worker_ip_location: Optional[str] = None
     worker_hostname: Optional[str] = None
     current_price: Optional[float] = None
     pending_buys: int = 0
@@ -106,6 +109,9 @@ class RunningStrategyResponse(BaseModel):
     max_daily_drawdown: Optional[str] = None
     worker_name: Optional[str] = None
     worker_ip: str
+    worker_private_ip: str = ""
+    worker_public_ip: str = ""
+    worker_ip_location: str = ""
     worker_hostname: str
     status: str
     current_price: float
@@ -285,6 +291,9 @@ async def get_running_strategies(
             max_daily_drawdown=info.get("max_daily_drawdown"),
             worker_name=info.get("worker_name"),
             worker_ip=info["worker_ip"],
+            worker_private_ip=info.get("worker_private_ip", ""),
+            worker_public_ip=info.get("worker_public_ip", ""),
+            worker_ip_location=info.get("worker_ip_location", ""),
             worker_hostname=info["worker_hostname"],
             status=info["status"],
             current_price=info["current_price"],
@@ -505,6 +514,9 @@ async def get_strategy_status(
         is_running=is_running,
         task_id=info.get("task_id"),
         worker_ip=info.get("worker_ip"),
+        worker_private_ip=info.get("worker_private_ip"),
+        worker_public_ip=info.get("worker_public_ip"),
+        worker_ip_location=info.get("worker_ip_location"),
         worker_hostname=info.get("worker_hostname"),
         current_price=info.get("current_price"),
         pending_buys=info.get("pending_buys", 0),

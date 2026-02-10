@@ -31,10 +31,27 @@ const filteredStrategies = computed(() => {
 })
 
 const workerOptions = computed<SelectOption[]>(() =>
-  workers.value.map((w, idx) => ({
-    label: `#${idx + 1} ${w.hostname}${w.ip ? ' (' + w.ip + ')' : ''}`,
-    value: w.name,
-  }))
+  workers.value.map((w, idx) => {
+    const publicIp = w.public_ip || w.ip || ''
+    const privateIp = w.private_ip || ''
+    const location = w.ip_location || ''
+
+    const details: string[] = []
+    if (publicIp) {
+      details.push(`出口IP:${publicIp}`)
+    }
+    if (location) {
+      details.push(location)
+    }
+    if (privateIp && privateIp !== publicIp) {
+      details.push(`内网:${privateIp}`)
+    }
+
+    return {
+      label: `#${idx + 1} ${w.hostname}${details.length ? ` (${details.join(' | ')})` : ''}`,
+      value: w.name,
+    }
+  })
 )
 
 function isRunning(id: number): boolean {

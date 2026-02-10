@@ -143,6 +143,26 @@ async function fetchWorkers() {
   }
 }
 
+function formatWorkerLabel(worker: WorkerInfo, index: number): string {
+  const publicIp = worker.public_ip || worker.ip || ''
+  const location = worker.ip_location || ''
+  const privateIp = worker.private_ip || ''
+
+  const details: string[] = []
+  if (publicIp) {
+    details.push(`出口IP:${publicIp}`)
+  }
+  if (location) {
+    details.push(location)
+  }
+  if (privateIp && privateIp !== publicIp) {
+    details.push(`内网:${privateIp}`)
+  }
+
+  const suffix = details.length ? ` (${details.join(' | ')})` : ''
+  return `#${index + 1} ${worker.hostname}${suffix}`
+}
+
 watch(() => props.visible, (val) => {
   if (val) {
     fetchAccounts()
@@ -318,7 +338,7 @@ onMounted(() => {
           <el-option
             v-for="(w, idx) in workers"
             :key="w.name"
-            :label="`#${idx + 1} ${w.hostname}${w.ip ? ' (' + w.ip + ')' : ''}`"
+            :label="formatWorkerLabel(w, idx)"
             :value="w.name"
           />
         </el-select>

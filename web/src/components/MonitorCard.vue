@@ -58,9 +58,32 @@ const updateTimeAgo = computed(() => {
 
 // Worker 信息显示
 const workerDisplay = computed(() => {
-  const ip = props.status?.worker_ip
-  if (ip) return ip
-  return ''
+  const status = props.status
+  if (!status) {
+    return ''
+  }
+
+  const publicIp = status.worker_public_ip || status.worker_ip || ''
+  const privateIp = status.worker_private_ip || ''
+  const location = status.worker_ip_location || ''
+
+  const details: string[] = []
+  if (location) {
+    details.push(location)
+  }
+  if (privateIp && privateIp !== publicIp) {
+    details.push(`内网:${privateIp}`)
+  }
+
+  if (!publicIp) {
+    return details.join(' | ')
+  }
+
+  if (details.length === 0) {
+    return `出口IP: ${publicIp}`
+  }
+
+  return `出口IP: ${publicIp} | ${details.join(' | ')}`
 })
 
 function toNumber(value: unknown): number {
