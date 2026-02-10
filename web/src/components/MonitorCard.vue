@@ -138,6 +138,17 @@ const polymarketStatus = computed(() => {
   }
 })
 
+const polymarketSlugShort = computed(() => {
+  const slug = polymarketStatus.value?.marketSlug
+  if (!slug || slug === '-') {
+    return '-'
+  }
+  if (slug.length <= 26) {
+    return slug
+  }
+  return `${slug.slice(0, 18)}...${slug.slice(-6)}`
+})
+
 const polymarketRemainingSeconds = computed(() => {
   const info = polymarketStatus.value
   if (!info) {
@@ -392,9 +403,9 @@ onUnmounted(() => {
         target="_blank"
         rel="noopener noreferrer"
       >
-        {{ polymarketStatus.marketSlug }}
+        {{ polymarketSlugShort }}
       </a>
-      <span v-else class="exchange-value">{{ polymarketStatus.marketSlug }}</span>
+      <span v-else class="exchange-value">{{ polymarketSlugShort }}</span>
       <el-tooltip
         effect="dark"
         placement="top"
