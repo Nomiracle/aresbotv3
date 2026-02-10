@@ -28,6 +28,11 @@ yarn-error.log*
 .npm/
 package-lock.json
 
+# Vite / TypeScript build artifacts
+*.tsbuildinfo
+web/vite.config.d.ts
+web/vite.config.js
+
 # Virtual environments
 venv/
 ENV/
