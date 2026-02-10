@@ -268,26 +268,28 @@ onMounted(() => {
       </el-row>
     </div>
 
-    <el-card>
-      <div style="margin-bottom: 12px;">
-        <el-space>
-          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStart">批量启动</el-button>
-          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStop">批量停止</el-button>
-          <el-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</el-button>
-          <span style="color: #909399; font-size: 12px;">已选: {{ selectedIds.length }}</span>
-        </el-space>
-      </div>
+	    <el-card>
+	      <div style="margin-bottom: 12px;">
+	        <el-space>
+	          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStart">批量启动</el-button>
+	          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStop">批量停止</el-button>
+	          <el-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</el-button>
+	          <span style="color: #909399; font-size: 12px;">已选: {{ selectedIds.length }}</span>
+	        </el-space>
+	      </div>
 
-      <el-table
-        :data="filteredStrategies"
-        v-loading="loading"
-        size="small"
-        :height="'calc(100vh - 220px)'"
-        stripe
-        border
-        :row-class-name="getRowClassName"
-        @selection-change="(rows: Strategy[]) => selectedIds = rows.map(r => r.id)"
-      >
+	      <div style="overflow-x: auto;">
+	        <el-table
+	        :data="filteredStrategies"
+	        v-loading="loading"
+	        size="small"
+	        :height="'calc(100vh - 220px)'"
+	        style="width: 100%"
+	        stripe
+	        border
+	        :row-class-name="getRowClassName"
+	        @selection-change="(rows: Strategy[]) => selectedIds = rows.map(r => r.id)"
+	        >
         <el-table-column type="selection" width="40" />
         <el-table-column prop="id" label="ID" width="50" fixed="left" />
 
@@ -476,8 +478,9 @@ onMounted(() => {
             <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
-      </el-table>
-    </el-card>
+	        </el-table>
+	      </div>
+	    </el-card>
 
     <StrategyForm v-model:visible="drawerVisible" :strategy="currentStrategy" @submit="handleSubmit" />
   </div>

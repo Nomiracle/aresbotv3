@@ -28,6 +28,12 @@ EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", 
 INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m",)
 DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
 
+
+def _get_polymarket_updown15m_symbols() -> List[str]:
+    markets = ("btc", "eth", "sol", "xrp")
+    outcomes = ("Up", "Down")
+    return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
+
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",
     "binance": "Binance Spot",
@@ -353,6 +359,9 @@ async def get_account_symbols(
     account = await AccountCRUD.get_by_id(session, account_id, user_email)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    if account.exchange.strip().lower() == "polymarket_updown15m":
+        return _get_polymarket_updown15m_symbols()
 
     cache_key = _get_symbols_cache_key(account.exchange, account.testnet)
     redis_client = get_redis_client().client
