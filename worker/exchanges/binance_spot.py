@@ -624,7 +624,32 @@ class BinanceSpot(BaseExchange):
                     if order is None:
                         continue
 
-                    order_symbol = order.get("symbol", "")
+                    order_symbol = str(order.get("symbol", ""))
+                    normalized_order_symbol = order_symbol.upper()
+                    if (
+                        "/" not in normalized_order_symbol
+                        and normalized_order_symbol.endswith("USDT")
+                        and len(normalized_order_symbol) > 4
+                    ):
+                        normalized_order_symbol = f"{normalized_order_symbol[:-4]}/USDT"
+
+                    with context.lock:
+                        subscribed_symbols = {
+                            str(symbol).upper()
+                            for symbol in context.subscribed_symbols
+                        }
+
+                    if normalized_order_symbol not in subscribed_symbols:
+                        logger.debug(
+                            "%s skip unrelated order update symbol=%s id=%s",
+                            context.log_prefix,
+                            order_symbol,
+                            order.get("id") or order.get("orderId"),
+                        )
+                        continue
+
+                    order_symbol = normalized_order_symbol
+                    order["symbol"] = normalized_order_symbol
                     filled = cls._safe_float(order.get("filled") or order.get("executedQty"))
                     status = cls._map_order_status(order.get("status"), filled)
 
