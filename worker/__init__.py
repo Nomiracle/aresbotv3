@@ -12,7 +12,13 @@ from worker.core.base_strategy import (
     TradeDecision,
     StrategyConfig,
 )
-from worker.trading_engine import TradingEngine
+
+# Keep worker package import lightweight. TradingEngine pulls optional deps
+# (DB drivers, etc.), so expose it only when available.
+try:
+    from worker.trading_engine import TradingEngine  # type: ignore
+except Exception:  # pragma: no cover
+    TradingEngine = None  # type: ignore
 
 __all__ = [
     "BaseExchange",
@@ -24,5 +30,7 @@ __all__ = [
     "Signal",
     "TradeDecision",
     "StrategyConfig",
-    "TradingEngine",
 ]
+
+if TradingEngine is not None:
+    __all__.append("TradingEngine")
