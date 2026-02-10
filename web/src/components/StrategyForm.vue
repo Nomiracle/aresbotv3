@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, reactive, watch, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Strategy, StrategyCreate, Account } from '@/types'
 import { accountApi, type TradingFee } from '@/api/account'
-import { getWorkersFromCache, type WorkerInfo } from '@/api/worker'
+import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
 
 const symbolsCache = new Map<number, string[]>()
 const tradingFeeCache = new Map<string, TradingFee>()
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 const formRef = ref<FormInstance>()
 const accounts = ref<Account[]>([])
 const workers = ref<WorkerInfo[]>([])
+const refreshingWorkers = ref(false)
 const symbols = ref<string[]>([])
 const symbolsLoading = ref(false)
 const tradingFee = ref<TradingFee | null>(null)
@@ -137,6 +139,18 @@ async function fetchAccounts() {
 
 function loadWorkersFromCache() {
   workers.value = getWorkersFromCache()
+}
+
+async function handleRefreshWorkers() {
+  refreshingWorkers.value = true
+  try {
+    workers.value = await refreshWorkersCache()
+    ElMessage.success('Worker 列表已刷新')
+  } catch {
+    loadWorkersFromCache()
+  } finally {
+    refreshingWorkers.value = false
+  }
 }
 
 function formatWorkerLabel(worker: WorkerInfo, index: number): string {
@@ -330,14 +344,17 @@ onMounted(() => {
         <el-input v-model="form.max_daily_drawdown" placeholder="留空表示不设置" />
       </el-form-item>
       <el-form-item label="指定 Worker">
-        <el-select v-model="form.worker_name" placeholder="自动分配" clearable style="width: 100%">
-          <el-option
-            v-for="(w, idx) in workers"
-            :key="w.name"
-            :label="formatWorkerLabel(w, idx)"
-            :value="w.name"
-          />
-        </el-select>
+        <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
+          <el-select v-model="form.worker_name" placeholder="自动分配" clearable style="flex: 1;">
+            <el-option
+              v-for="(w, idx) in workers"
+              :key="w.name"
+              :label="formatWorkerLabel(w, idx)"
+              :value="w.name"
+            />
+          </el-select>
+          <el-button :loading="refreshingWorkers" @click="handleRefreshWorkers">刷新</el-button>
+        </div>
       </el-form-item>
     </el-form>
     <template #footer>

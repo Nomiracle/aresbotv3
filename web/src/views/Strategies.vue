@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
-import { getWorkersFromCache, type WorkerInfo } from '@/api/worker'
+import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
 import StrategyForm from '@/components/StrategyForm.vue'
 import EditableCell from '@/components/EditableCell.vue'
 import type { SelectOption } from '@/components/EditableCell.vue'
@@ -16,6 +16,7 @@ const selectedIds = ref<number[]>([])
 const currentStrategy = ref<Strategy | null>(null)
 const searchKeyword = ref('')
 const workers = ref<WorkerInfo[]>([])
+const refreshingWorkers = ref(false)
 
 // 内联编辑状态
 const editingCell = ref<{ rowId: number; field: string } | null>(null)
@@ -128,6 +129,18 @@ async function fetchAllStatus() {
 
 function loadWorkersFromCache() {
   workers.value = getWorkersFromCache()
+}
+
+async function handleRefreshWorkers() {
+  refreshingWorkers.value = true
+  try {
+    workers.value = await refreshWorkersCache()
+    ElMessage.success('Worker 列表已刷新')
+  } catch {
+    loadWorkersFromCache()
+  } finally {
+    refreshingWorkers.value = false
+  }
 }
 
 function getStatusType(id: number) {
@@ -243,6 +256,7 @@ onMounted(() => {
         <h2>策略管理</h2>
         <el-space>
           <el-input v-model="searchKeyword" placeholder="搜索策略" clearable style="width: 200px" />
+          <el-button :loading="refreshingWorkers" @click="handleRefreshWorkers">刷新 Worker</el-button>
           <el-button type="primary" @click="handleAdd">新建</el-button>
         </el-space>
       </el-row>

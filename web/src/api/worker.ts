@@ -23,6 +23,12 @@ const WORKERS_CACHE_KEY = 'aresbot:workers:v1'
 let workersMemoryCache: WorkerInfo[] | null = null
 let workersPreloadPromise: Promise<WorkerInfo[]> | null = null
 
+function updateWorkersCache(workers: WorkerInfo[]): WorkerInfo[] {
+  workersMemoryCache = workers
+  writeWorkersCacheToStorage(workers)
+  return [...workers]
+}
+
 function getLocalStorage(): Storage | null {
   if (typeof window === 'undefined') {
     return null
@@ -85,11 +91,7 @@ export async function preloadWorkersCache(): Promise<WorkerInfo[]> {
   }
 
   workersPreloadPromise = getWorkers()
-    .then((workers) => {
-      workersMemoryCache = workers
-      writeWorkersCacheToStorage(workers)
-      return [...workers]
-    })
+    .then((workers) => updateWorkersCache(workers))
     .catch((error) => {
       const cached = ensureMemoryCache()
       if (cached.length > 0) {
@@ -102,4 +104,9 @@ export async function preloadWorkersCache(): Promise<WorkerInfo[]> {
     })
 
   return workersPreloadPromise
+}
+
+export async function refreshWorkersCache(): Promise<WorkerInfo[]> {
+  const workers = await getWorkers()
+  return updateWorkersCache(workers)
 }
