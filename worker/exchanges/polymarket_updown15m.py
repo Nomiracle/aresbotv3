@@ -282,37 +282,25 @@ class PolymarketUpDown15m(BaseExchange):
     def _get_market_token_by_timestamp(self, timestamp: int) -> Optional[str]:
         """通过slug查询gamma API获取市场token_id (参考v1实现)."""
         slug = f"{self._market_prefix}-updown-15m-{timestamp}"
-        try:
-            resp = requests.get(f"{_GAMMA_API_BASE}/events?slug={slug}", timeout=10)
-            if resp.status_code != 200:
-                return None
+        event = _fetch_gamma_event(slug)
+        if not event:
+            return None
 
-            events = resp.json()
-            if not events:
-                return None
+        market = (event.get("markets") or [{}])[0] if isinstance(event, dict) else {}
+        if not isinstance(market, dict):
+            return None
 
-            market = events[0].get("markets", [{}])[0]
-            self._condition_id = market.get("conditionId") or market.get("condition_id")
+        self._condition_id = market.get("conditionId") or market.get("condition_id")
 
-            clob_token_ids = _safe_json_list(market.get("clobTokenIds"))
-            outcomes = _safe_json_list(market.get("outcomes"))
+        clob_token_ids = _safe_json_list(market.get("clobTokenIds"))
+        outcomes = _safe_json_list(market.get("outcomes"))
+        token_id = _select_token_id(outcomes, clob_token_ids, self._outcome)
+        if not token_id:
+            return None
 
-            # 查找匹配的outcome token
-            for i, outcome in enumerate(outcomes):
-                if outcome.lower() == self._outcome.lower() and i < len(clob_token_ids):
-                    self._market_slug = slug
-                    self._market_end_time = timestamp + _MARKET_PERIOD_SECONDS
-                    return clob_token_ids[i]
-
-            # 兜底: 使用第一个token
-            if clob_token_ids:
-                self._market_slug = slug
-                self._market_end_time = timestamp + _MARKET_PERIOD_SECONDS
-                return clob_token_ids[0]
-
-        except Exception as e:
-            logger.warning("%s query market %s failed: %s", self.log_prefix, slug, e)
-        return None
+        self._market_slug = slug
+        self._market_end_time = timestamp + _MARKET_PERIOD_SECONDS
+        return token_id
 
     def _get_next_market_token(self, max_retries: int = 6) -> Optional[str]:
         """获取下一个市场的token_id, 支持重试."""
@@ -567,3 +555,31 @@ def _safe_json_list(value: Any) -> list:
             return []
         return parsed if isinstance(parsed, list) else []
     return []
+
+
+def _fetch_gamma_event(slug: str) -> dict[str, Any] | None:
+    try:
+        resp = requests.get(f"{_GAMMA_API_BASE}/events?slug={slug}", timeout=10)
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        if not payload or not isinstance(payload, list):
+            return None
+        event = payload[0]
+        return event if isinstance(event, dict) else None
+    except Exception as err:
+        logger.warning("gamma query failed slug=%s err=%s", slug, err)
+        return None
+
+
+def _select_token_id(outcomes: list, token_ids: list, desired_outcome: str) -> str | None:
+    normalized = desired_outcome.lower()
+    for idx, outcome in enumerate(outcomes):
+        if not isinstance(outcome, str):
+            continue
+        if outcome.lower() == normalized and idx < len(token_ids):
+            return str(token_ids[idx])
+    if token_ids:
+        return str(token_ids[0])
+    return None
