@@ -108,6 +108,16 @@ class PolymarketUpDown15m(BaseExchange):
     def get_fee_rate(self) -> float:
         return 0.0
 
+    def get_status_extra(self) -> Dict[str, Any]:
+        return {
+            "market_slug": self._market_slug,
+            "token_id": self._token_id,
+            "market_end_time": self._market_end_time,
+            "seconds_until_close": self._seconds_until_close(),
+            "is_closing": self._is_closing,
+            "condition_id": self._condition_id,
+        }
+
     def get_ticker_price(self) -> float:
         self._ensure_market_valid()
         if not self._token_id:

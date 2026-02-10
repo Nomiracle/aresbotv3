@@ -182,6 +182,7 @@ def _cleanup_runtime(redis_client, strategy_id: int, task_id: str | None) -> Non
 def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, Any]) -> None:
     redis_client.update_running_status(
         strategy_id=strategy_id,
+        exchange=status.get("exchange"),
         current_price=status.get("current_price"),
         pending_buys=status.get("pending_buys"),
         pending_sells=status.get("pending_sells"),
@@ -189,6 +190,7 @@ def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, An
         buy_orders=status.get("buy_orders"),
         sell_orders=status.get("sell_orders"),
         last_error=status.get("last_error"),
+        extra_status=status.get("extra_status"),
     )
 
 

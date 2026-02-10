@@ -220,6 +220,7 @@ class RedisClient:
     def update_running_status(
         self,
         strategy_id: int,
+        exchange: str = None,
         current_price: float = None,
         pending_buys: int = None,
         pending_sells: int = None,
@@ -228,11 +229,14 @@ class RedisClient:
         sell_orders: list = None,
         last_error: str = None,
         status: str = None,
+        extra_status: Dict[str, Any] = None,
     ) -> None:
         """Update the running status for a strategy."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
         update_data = {"updated_at": int(time.time())}
 
+        if exchange is not None:
+            update_data["exchange"] = exchange
         if current_price is not None:
             update_data["current_price"] = current_price
         if pending_buys is not None:
@@ -249,6 +253,8 @@ class RedisClient:
             update_data["last_error"] = last_error
         if status is not None:
             update_data["status"] = status
+        if extra_status is not None:
+            update_data["extra_status"] = json.dumps(extra_status, ensure_ascii=False)
 
         self._client.hset(key, mapping=update_data)
 
@@ -285,6 +291,11 @@ class RedisClient:
         except json.JSONDecodeError:
             sell_orders = []
 
+        try:
+            extra_status = json.loads(info.get("extra_status", "{}") or "{}")
+        except json.JSONDecodeError:
+            extra_status = {}
+
         return {
             "task_id": info.get("task_id", ""),
             "worker_ip": info.get("worker_ip", ""),
@@ -309,6 +320,7 @@ class RedisClient:
             "worker_name": info.get("worker_name") or None,
             "exchange": info.get("exchange") or None,
             "runtime_config": runtime_config,
+            "extra_status": extra_status,
             "started_at": int(info.get("started_at", 0)),
             "current_price": float(info.get("current_price", 0)),
             "pending_buys": int(info.get("pending_buys", 0)),

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { WarningFilled } from '@element-plus/icons-vue'
+import { InfoFilled, WarningFilled } from '@element-plus/icons-vue'
 import type { StrategyStatus, OrderDetail } from '@/types'
 
 interface MonitorCardStrategy {
@@ -85,6 +85,86 @@ const workerDisplay = computed(() => {
 
   return `出口IP: ${publicIp} | ${details.join(' | ')}`
 })
+
+const exchangeLabel = computed(() => {
+  const exchange = props.status?.exchange
+  if (!exchange) {
+    return ''
+  }
+
+  const labels: Record<string, string> = {
+    binance: 'Binance Spot',
+    binance_spot: 'Binance Spot',
+    polymarket_updown15m: 'Polymarket 15m',
+  }
+
+  return labels[exchange] ?? exchange
+})
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const polymarketStatus = computed(() => {
+  if (props.status?.exchange !== 'polymarket_updown15m') {
+    return null
+  }
+
+  const extra = props.status.extra_status ?? {}
+  return {
+    marketSlug: typeof extra.market_slug === 'string' ? extra.market_slug : '-',
+    tokenId: typeof extra.token_id === 'string' ? extra.token_id : '',
+    secondsUntilClose: toFiniteNumber(extra.seconds_until_close),
+    isClosing: Boolean(extra.is_closing),
+  }
+})
+
+const polymarketTooltipText = computed(() => {
+  const info = polymarketStatus.value
+  if (!info) {
+    return ''
+  }
+
+  return `数据来源：worker 上报的 extra_status（Polymarket 适配器）。\n` +
+    `market：当前15分钟市场 slug。\n` +
+    `剩余：距离该市场结束的倒计时。\n` +
+    `token：当前交易 outcome 对应的 token_id。`
+})
+
+const isPolymarketCritical = computed(() => {
+  const info = polymarketStatus.value
+  if (!info) {
+    return false
+  }
+  return info.isClosing || (info.secondsUntilClose !== null && info.secondsUntilClose <= 60)
+})
+
+function formatCountdown(seconds: number | null): string {
+  if (seconds === null) {
+    return '-'
+  }
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainSeconds = safeSeconds % 60
+  return `${minutes}m ${remainSeconds.toString().padStart(2, '0')}s`
+}
+
+function compactToken(tokenId: string): string {
+  if (!tokenId) {
+    return '-'
+  }
+  if (tokenId.length <= 14) {
+    return tokenId
+  }
+  return `${tokenId.slice(0, 6)}...${tokenId.slice(-4)}`
+}
 
 function toNumber(value: unknown): number {
   if (typeof value === 'number') {
@@ -176,6 +256,9 @@ onUnmounted(() => {
         <span class="index">#{{ index }}</span>
         <span class="title-text">{{ strategy.name }}</span>
         <el-tag size="small" class="symbol-tag">{{ strategy.symbol }}</el-tag>
+        <el-tag v-if="exchangeLabel" size="small" type="info" effect="plain" class="exchange-tag">
+          {{ exchangeLabel }}
+        </el-tag>
       </div>
       <div class="status">
         <span :class="['status-dot', isRunning ? 'running' : 'stopped']"></span>
@@ -209,6 +292,30 @@ onUnmounted(() => {
       <template v-if="workerDisplay">
         <span class="separator">|</span>
         <span class="worker-info">{{ workerDisplay }}</span>
+      </template>
+    </div>
+
+    <div v-if="isRunning && polymarketStatus" class="exchange-row">
+      <span class="exchange-label">市场:</span>
+      <span class="exchange-value">{{ polymarketStatus.marketSlug }}</span>
+      <el-tooltip
+        effect="dark"
+        placement="top"
+        :content="polymarketTooltipText"
+        :show-after="200"
+        :max-width="360"
+      >
+        <el-icon class="exchange-help"><InfoFilled /></el-icon>
+      </el-tooltip>
+      <span class="separator">|</span>
+      <span class="exchange-label">剩余:</span>
+      <span :class="['exchange-value', { danger: isPolymarketCritical }]">
+        {{ formatCountdown(polymarketStatus.secondsUntilClose) }}
+      </span>
+      <template v-if="polymarketStatus.tokenId">
+        <span class="separator">|</span>
+        <span class="exchange-label">Token:</span>
+        <span class="exchange-value token">{{ compactToken(polymarketStatus.tokenId) }}</span>
       </template>
     </div>
 
@@ -318,6 +425,10 @@ onUnmounted(() => {
   margin-left: 4px;
 }
 
+.exchange-tag {
+  margin-left: 2px;
+}
+
 .status {
   display: flex;
   align-items: center;
@@ -352,6 +463,37 @@ onUnmounted(() => {
   margin-top: 6px;
   font-size: 12px;
   color: #909399;
+}
+
+.exchange-row {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.exchange-help {
+  margin-left: 4px;
+  color: #909399;
+  cursor: help;
+}
+
+.exchange-label {
+  color: #909399;
+}
+
+.exchange-value {
+  color: #606266;
+  font-weight: 500;
+}
+
+.exchange-value.token {
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.exchange-value.danger {
+  color: #e6a23c;
 }
 
 .worker-info {

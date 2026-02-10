@@ -62,6 +62,7 @@ export interface StrategyStatus {
   strategy_id: number
   is_running: boolean
   task_id?: string
+  exchange?: string | null
   worker_name?: string
   worker_ip?: string
   worker_private_ip?: string
@@ -84,11 +85,13 @@ export interface StrategyStatus {
   updated_at?: number
   last_error?: string
   error_count?: number
+  extra_status?: Record<string, unknown>
 }
 
 export interface RunningStrategy {
   strategy_id: number
   task_id: string
+  exchange?: string | null
   strategy_name: string
   symbol: string
   base_order_size: string
@@ -117,6 +120,7 @@ export interface RunningStrategy {
   started_at: number
   updated_at: number
   last_error?: string | null
+  extra_status?: Record<string, unknown>
 }
 
 export interface Trade {

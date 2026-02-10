@@ -1,9 +1,9 @@
 """Strategy management routes."""
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db_session
@@ -79,10 +79,12 @@ class StrategyStatusResponse(BaseModel):
     worker_public_ip: Optional[str] = None
     worker_ip_location: Optional[str] = None
     worker_hostname: Optional[str] = None
+    exchange: Optional[str] = None
     current_price: Optional[float] = None
     pending_buys: int = 0
     pending_sells: int = 0
     position_count: int = 0
+    extra_status: dict[str, Any] = Field(default_factory=dict)
     started_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -113,13 +115,15 @@ class RunningStrategyResponse(BaseModel):
     worker_public_ip: str = ""
     worker_ip_location: str = ""
     worker_hostname: str
+    exchange: Optional[str] = None
     status: str
     current_price: float
     pending_buys: int
     pending_sells: int
-    buy_orders: list[OrderDetail] = []
-    sell_orders: list[OrderDetail] = []
+    buy_orders: list[OrderDetail] = Field(default_factory=list)
+    sell_orders: list[OrderDetail] = Field(default_factory=list)
     position_count: int
+    extra_status: dict[str, Any] = Field(default_factory=dict)
     started_at: int
     updated_at: int
     last_error: Optional[str] = None
@@ -295,6 +299,7 @@ async def get_running_strategies(
             worker_public_ip=info.get("worker_public_ip", ""),
             worker_ip_location=info.get("worker_ip_location", ""),
             worker_hostname=info["worker_hostname"],
+            exchange=info.get("exchange"),
             status=info["status"],
             current_price=info["current_price"],
             pending_buys=info["pending_buys"],
@@ -302,6 +307,7 @@ async def get_running_strategies(
             buy_orders=[OrderDetail(**o) for o in info.get("buy_orders", [])],
             sell_orders=[OrderDetail(**o) for o in info.get("sell_orders", [])],
             position_count=info["position_count"],
+            extra_status=info.get("extra_status", {}),
             started_at=info["started_at"],
             updated_at=info["updated_at"],
             last_error=info.get("last_error") or None,
@@ -518,10 +524,12 @@ async def get_strategy_status(
         worker_public_ip=info.get("worker_public_ip"),
         worker_ip_location=info.get("worker_ip_location"),
         worker_hostname=info.get("worker_hostname"),
+        exchange=info.get("exchange"),
         current_price=info.get("current_price"),
         pending_buys=info.get("pending_buys", 0),
         pending_sells=info.get("pending_sells", 0),
         position_count=info.get("position_count", 0),
+        extra_status=info.get("extra_status", {}),
         started_at=info.get("started_at"),
         updated_at=info.get("updated_at"),
     )

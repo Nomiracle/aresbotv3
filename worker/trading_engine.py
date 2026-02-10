@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from collections import deque
 from datetime import datetime
 import threading
@@ -679,24 +679,53 @@ class TradingEngine:
         self._last_status_update_time = now
 
         with self._lock:
-            buy_orders = [
-                {"price": o.price, "quantity": o.quantity}
-                for o in self._pending_buys.values()
-            ]
-            sell_orders = [
-                {"price": o.price, "quantity": o.quantity}
-                for o in self._pending_sells.values()
-            ]
+            pending_buys_snapshot = dict(self._pending_buys)
+            pending_sells_snapshot = dict(self._pending_sells)
 
-            status = {
-                "current_price": self._current_price,
-                "pending_buys": len(self._pending_buys),
-                "pending_sells": len(self._pending_sells),
-                "position_count": self.position_tracker.get_position_count(),
-                "buy_orders": buy_orders,
-                "sell_orders": sell_orders,
-                "last_error": self._last_error,
-            }
+        buy_orders = [
+            {"price": o.price, "quantity": o.quantity}
+            for o in pending_buys_snapshot.values()
+        ]
+        sell_orders = [
+            {"price": o.price, "quantity": o.quantity}
+            for o in pending_sells_snapshot.values()
+        ]
+
+        exchange_info = self.exchange.get_exchange_info() or {}
+        exchange_id = str(exchange_info.get("id") or "unknown")
+
+        strategy_extra: dict[str, Any] = {}
+        try:
+            strategy_extra = self.strategy.get_status_extra(
+                current_price=self._current_price,
+                pending_buy_orders=pending_buys_snapshot,
+                pending_sell_orders=pending_sells_snapshot,
+            )
+        except Exception as err:
+            self.log.debug("获取策略扩展状态失败: %s", err)
+
+        exchange_extra: dict[str, Any] = {}
+        try:
+            exchange_extra = self.exchange.get_status_extra()
+        except Exception as err:
+            self.log.debug("获取交易所扩展状态失败: %s", err)
+
+        extra_status = {
+            **(strategy_extra or {}),
+            **(exchange_extra or {}),
+        }
+
+        status = {
+            "exchange": exchange_id,
+            "current_price": self._current_price,
+            "pending_buys": len(pending_buys_snapshot),
+            "pending_sells": len(pending_sells_snapshot),
+            "position_count": self.position_tracker.get_position_count(),
+            "buy_orders": buy_orders,
+            "sell_orders": sell_orders,
+            "last_error": self._last_error,
+            "extra_status": extra_status,
+        }
 
         try:
             self.on_status_update(status)

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Mapping, Optional, TYPE_CHECKING
+from typing import Any, Mapping, Optional, TYPE_CHECKING
 from enum import Enum
 
 if TYPE_CHECKING:
@@ -43,6 +43,16 @@ class BaseStrategy(ABC):
 
     def __init__(self, config: StrategyConfig):
         self.config = config
+
+    def get_status_extra(
+        self,
+        current_price: Optional[float],
+        pending_buy_orders: Mapping[str, "Order"],
+        pending_sell_orders: Mapping[str, "Order"],
+    ) -> dict[str, Any]:
+        """返回策略相关的扩展运行状态。"""
+        del current_price, pending_buy_orders, pending_sell_orders
+        return {}
 
     @abstractmethod
     def should_buy(

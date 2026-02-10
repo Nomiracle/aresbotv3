@@ -134,6 +134,10 @@ class BaseExchange(ABC):
         """获取当前价格"""
         pass
 
+    def get_status_extra(self) -> Dict[str, Any]:
+        """返回交易所相关的扩展运行状态。"""
+        return {}
+
     def align_price(self, price: float, rules: Optional[TradingRules] = None) -> float:
         """价格对齐"""
         if rules is None:

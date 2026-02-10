@@ -146,6 +146,7 @@ async function fetchStrategies(options: { showLoading?: boolean } = {}) {
       statusMap.value.set(item.strategy_id, {
         strategy_id: item.strategy_id,
         is_running: item.status === 'running',
+        exchange: item.exchange ?? undefined,
         task_id: item.task_id,
         worker_ip: item.worker_ip,
         worker_private_ip: item.worker_private_ip,
@@ -158,6 +159,7 @@ async function fetchStrategies(options: { showLoading?: boolean } = {}) {
         buy_orders: item.buy_orders ?? [],
         sell_orders: item.sell_orders ?? [],
         position_count: item.position_count,
+        extra_status: item.extra_status ?? undefined,
         started_at: item.started_at,
         updated_at: item.updated_at,
         last_error: item.last_error ?? undefined,
