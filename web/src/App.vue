@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { preloadWorkersCache } from '@/api/worker'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,6 +20,12 @@ const menuItems = [
 function handleSelect(path: string) {
   router.push(path)
 }
+
+onMounted(() => {
+  preloadWorkersCache().catch(() => {
+    // Worker 缓存预热失败时保持静默，由业务页面继续读取已有缓存
+  })
+})
 </script>
 
 <template>

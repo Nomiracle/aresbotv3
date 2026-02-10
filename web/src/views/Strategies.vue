@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
-import { getWorkers, type WorkerInfo } from '@/api/worker'
+import { getWorkersFromCache, type WorkerInfo } from '@/api/worker'
 import StrategyForm from '@/components/StrategyForm.vue'
 import EditableCell from '@/components/EditableCell.vue'
 import type { SelectOption } from '@/components/EditableCell.vue'
@@ -126,12 +126,8 @@ async function fetchAllStatus() {
   await Promise.all(strategies.value.map(s => fetchStatus(s.id)))
 }
 
-async function fetchWorkers() {
-  try {
-    workers.value = await getWorkers()
-  } catch {
-    workers.value = []
-  }
+function loadWorkersFromCache() {
+  workers.value = getWorkersFromCache()
 }
 
 function getStatusType(id: number) {
@@ -236,9 +232,7 @@ onMounted(() => {
       // 错误已由拦截器处理
     })
 
-  fetchWorkers().catch(() => {
-    // 错误已由拦截器处理
-  })
+  loadWorkersFromCache()
 })
 </script>
 

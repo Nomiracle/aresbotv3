@@ -3,7 +3,7 @@ import { computed, ref, reactive, watch, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Strategy, StrategyCreate, Account } from '@/types'
 import { accountApi, type TradingFee } from '@/api/account'
-import { getWorkers, type WorkerInfo } from '@/api/worker'
+import { getWorkersFromCache, type WorkerInfo } from '@/api/worker'
 
 const symbolsCache = new Map<number, string[]>()
 const tradingFeeCache = new Map<string, TradingFee>()
@@ -135,12 +135,8 @@ async function fetchAccounts() {
   }
 }
 
-async function fetchWorkers() {
-  try {
-    workers.value = await getWorkers()
-  } catch {
-    workers.value = []
-  }
+function loadWorkersFromCache() {
+  workers.value = getWorkersFromCache()
 }
 
 function formatWorkerLabel(worker: WorkerInfo, index: number): string {
@@ -166,7 +162,7 @@ function formatWorkerLabel(worker: WorkerInfo, index: number): string {
 watch(() => props.visible, (val) => {
   if (val) {
     fetchAccounts()
-    fetchWorkers()
+    loadWorkersFromCache()
     if (props.strategy) {
       Object.assign(form, {
         account_id: props.strategy.account_id,
@@ -254,7 +250,7 @@ async function handleSubmit() {
 
 onMounted(() => {
   fetchAccounts()
-  fetchWorkers()
+  loadWorkersFromCache()
 })
 </script>
 
