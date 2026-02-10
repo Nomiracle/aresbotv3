@@ -23,13 +23,14 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SYMBOLS_CACHE_TTL_SECONDS = 600
-EXCHANGES_CACHE_KEY = "exchanges:supported:v2"
+EXCHANGES_CACHE_KEY = "exchanges:supported:v3"
 EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
-INTERNAL_SUPPORTED_EXCHANGES = ("binance_spot", "polymarket_updown15m")
-DEFAULT_SUPPORTED_EXCHANGES = ("binance", "okx", "bybit", *INTERNAL_SUPPORTED_EXCHANGES)
+INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m",)
+DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
 
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",
+    "binance": "Binance Spot",
     "binance_spot": "Binance Spot",
     "binanceusdm": "Binance USDM",
     "binancecoinm": "Binance COIN-M",

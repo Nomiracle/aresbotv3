@@ -17,7 +17,7 @@ interface ExchangeCachePayload {
   exchanges: ExchangeOption[]
 }
 
-const EXCHANGES_CACHE_KEY = 'aresbot:exchanges:v2'
+const EXCHANGES_CACHE_KEY = 'aresbot:exchanges:v3'
 
 let exchangesMemoryCache: ExchangeOption[] | null = null
 
