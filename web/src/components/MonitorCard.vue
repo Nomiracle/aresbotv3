@@ -253,22 +253,7 @@ function formatOrderValue(value: number) {
   return `$${value.toFixed(2)}`
 }
 
-// 计算挂单偏移百分比
-function calcOffset(orderPrice: number, currentPrice: number | null | undefined): string {
-  if (!currentPrice || currentPrice === 0) return ''
-  const offset = ((orderPrice - currentPrice) / currentPrice) * 100
-  const sign = offset >= 0 ? '+' : ''
-  return `(${sign}${offset.toFixed(2)}%)`
-}
-
 // 格式化挂单显示
-function formatOrderDisplay(order: OrderDetail, currentPrice: number | null | undefined): string {
-  const priceStr = `$${formatPrice(order.price)}`
-  const qtyStr = order.quantity.toString()
-  const offset = calcOffset(order.price, currentPrice)
-  return `${priceStr}@${qtyStr}${offset}`
-}
-
 function formatPriceRange(prices: number[]): string {
   if (!prices.length) {
     return '-'
