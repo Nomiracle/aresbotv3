@@ -289,7 +289,7 @@ onUnmounted(() => {
         @start="handleStart"
         @stop="handleStop"
       />
-      <el-empty v-if="runningStrategies.length === 0" description="暂无运行中的策略" />
+      <el-empty v-if="runningStrategies.length === 0" description="暂无运行中的策略" style="width: 100%" />
     </div>
   </div>
 </template>
