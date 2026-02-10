@@ -5,11 +5,24 @@ from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 
 
+def _has_file_handler(logger: logging.Logger, log_file: str) -> bool:
+    """Return True when logger already has a handler for the same file."""
+    expected_path = os.path.abspath(log_file)
+    for handler in logger.handlers:
+        base_filename = getattr(handler, "baseFilename", None)
+        if not base_filename:
+            continue
+        if os.path.abspath(base_filename) == expected_path:
+            return True
+    return False
+
+
 def setup_file_logging(
     log_dir: str,
     worker_name: str,
     level: int = logging.INFO,
     backup_count: int = 30,  # 保留 30 天
+    logger: Optional[logging.Logger] = None,
 ) -> None:
     """配置按日期轮转的文件日志"""
     os.makedirs(log_dir, exist_ok=True)
@@ -30,9 +43,15 @@ def setup_file_logging(
     handler.setLevel(level)
     handler.setFormatter(formatter)
 
-    # 添加到 root logger
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    target_logger = logger or logging.getLogger()
+
+    if _has_file_handler(target_logger, log_file):
+        return
+
+    if target_logger.level == logging.NOTSET or target_logger.level > level:
+        target_logger.setLevel(level)
+
+    target_logger.addHandler(handler)
 
 
 def setup_logger(

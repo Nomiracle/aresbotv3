@@ -9,7 +9,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 from celery import Celery
-from celery.signals import celeryd_after_setup, worker_process_init, worker_ready, worker_shutdown
+from celery.signals import (
+    after_setup_logger,
+    after_setup_task_logger,
+    celeryd_after_setup,
+    worker_process_init,
+    worker_ready,
+    worker_shutdown,
+)
 
 from shared.utils.crypto import init_encryption
 
@@ -49,6 +56,18 @@ def _configure_ccxt_logger() -> None:
     )
     for logger_name in ccxt_logger_names:
         logging.getLogger(logger_name).setLevel(logging.INFO)
+
+
+def _setup_worker_file_logging(logger: logging.Logger | None = None) -> None:
+    """Attach rotating file handler for worker logs."""
+    from shared.utils.logger import setup_file_logging
+
+    log_dir = os.environ.get("WORKER_LOG_DIR", "/app/logs")
+    worker_name = os.environ.get("WORKER_NAME", "worker")
+    log_level_name = os.environ.get("CELERY_LOG_LEVEL", "info").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+
+    setup_file_logging(log_dir, worker_name, level=log_level, logger=logger)
 
 
 _init_encryption()
@@ -121,16 +140,19 @@ def on_celeryd_after_setup(sender=None, instance=None, **kwargs):
 def on_worker_process_init(**kwargs):
     """Apply logger levels in each forked worker process."""
     _configure_ccxt_logger()
+    _setup_worker_file_logging()
 
-    # 配置文件日志
-    from shared.utils.logger import setup_file_logging
 
-    log_dir = os.environ.get("WORKER_LOG_DIR", "/app/logs")
-    worker_name = os.environ.get("WORKER_NAME", "worker")
-    log_level_name = os.environ.get("CELERY_LOG_LEVEL", "info").upper()
-    log_level = getattr(logging, log_level_name, logging.INFO)
+@after_setup_logger.connect
+def on_after_setup_logger(logger, *args, **kwargs):
+    """Attach file logging after Celery configures main logger."""
+    _setup_worker_file_logging(logger)
 
-    setup_file_logging(log_dir, worker_name, level=log_level)
+
+@after_setup_task_logger.connect
+def on_after_setup_task_logger(logger, *args, **kwargs):
+    """Attach file logging after Celery configures task logger."""
+    _setup_worker_file_logging(logger)
 
 
 @worker_ready.connect
