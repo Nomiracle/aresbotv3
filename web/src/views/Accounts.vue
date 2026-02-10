@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Account, AccountCreate } from '@/types'
-import { accountApi } from '@/api/account'
+import { accountApi, preloadExchangeOptionsCache } from '@/api/account'
 import AccountForm from '@/components/AccountForm.vue'
 
 const accounts = ref<Account[]>([])
@@ -21,11 +21,17 @@ async function fetchAccounts() {
 
 function handleAdd() {
   currentAccount.value = null
+  preloadExchangeOptionsCache().catch(() => {
+    // 使用缓存/兜底值继续打开弹窗
+  })
   dialogVisible.value = true
 }
 
 function handleEdit(account: Account) {
   currentAccount.value = account
+  preloadExchangeOptionsCache().catch(() => {
+    // 使用缓存/兜底值继续打开弹窗
+  })
   dialogVisible.value = true
 }
 
