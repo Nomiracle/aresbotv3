@@ -157,8 +157,14 @@ function formatWorkerLabel(worker: WorkerInfo, index: number): string {
   const publicIp = worker.public_ip || worker.ip || ''
   const location = worker.ip_location || ''
   const privateIp = worker.private_ip || ''
+  const concurrency = Number(worker.concurrency || 0)
+  const activeTasks = Number(worker.active_tasks || 0)
+  const availableConcurrency = Math.max(concurrency - activeTasks, 0)
 
   const details: string[] = []
+  if (concurrency > 0) {
+    details.push(`可用并发:${availableConcurrency}/${concurrency}`)
+  }
   if (publicIp) {
     details.push(`出口IP:${publicIp}`)
   }

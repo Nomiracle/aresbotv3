@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 from collections import defaultdict
 from functools import partial
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,15 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SYMBOLS_CACHE_TTL_SECONDS = 600
+EXCHANGES_CACHE_KEY = "exchanges:supported:v1"
+EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
+DEFAULT_SUPPORTED_EXCHANGES = ("binance", "okx", "bybit")
+
+EXCHANGE_LABEL_OVERRIDES = {
+    "okx": "OKX",
+    "binanceusdm": "Binance USDM",
+    "binancecoinm": "Binance COIN-M",
+}
 
 
 class AccountCreate(BaseModel):
@@ -56,6 +66,58 @@ class TradingFeeResponse(BaseModel):
     symbol: str
     maker: float
     taker: float
+
+
+class ExchangeOptionResponse(BaseModel):
+    value: str
+    label: str
+
+
+def _format_exchange_label(exchange_id: str) -> str:
+    normalized_id = exchange_id.lower().strip()
+    if normalized_id in EXCHANGE_LABEL_OVERRIDES:
+        return EXCHANGE_LABEL_OVERRIDES[normalized_id]
+
+    words = normalized_id.replace("_", " ").replace("-", " ").split()
+    if not words:
+        return normalized_id.upper()
+
+    return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in words)
+
+
+def _get_supported_exchange_ids() -> List[str]:
+    raw_config = os.environ.get("SUPPORTED_EXCHANGES", "")
+    if raw_config.strip():
+        configured = [
+            item.strip().lower()
+            for item in raw_config.split(",")
+            if item.strip()
+        ]
+    else:
+        configured = list(DEFAULT_SUPPORTED_EXCHANGES)
+
+    available_exchanges = set(getattr(ccxt, "exchanges", []))
+    validated: List[str] = []
+    for exchange_id in configured:
+        if exchange_id not in available_exchanges:
+            logger.warning("skip unsupported exchange id from config: %s", exchange_id)
+            continue
+        if exchange_id in validated:
+            continue
+        validated.append(exchange_id)
+
+    if validated:
+        return validated
+
+    return [exchange_id for exchange_id in DEFAULT_SUPPORTED_EXCHANGES if exchange_id in available_exchanges]
+
+
+def _build_exchange_options() -> List[ExchangeOptionResponse]:
+    exchange_ids = _get_supported_exchange_ids()
+    return [
+        ExchangeOptionResponse(value=exchange_id, label=_format_exchange_label(exchange_id))
+        for exchange_id in exchange_ids
+    ]
 
 
 def mask_api_key(api_key: str) -> str:
@@ -199,6 +261,39 @@ def _fetch_account_trading_fee_sync(
         return TradingFeeResponse(symbol=symbol, maker=maker, taker=taker)
     finally:
         _safe_close_exchange(exchange_client)
+
+
+@router.get("/exchanges", response_model=List[ExchangeOptionResponse])
+async def list_supported_exchanges(
+    refresh: bool = False,
+    user_email: str = Depends(get_current_user),
+):
+    del user_email
+
+    redis_client = get_redis_client().client
+
+    if not refresh:
+        try:
+            cached_raw = redis_client.get(EXCHANGES_CACHE_KEY)
+            if cached_raw:
+                parsed = json.loads(cached_raw)
+                if isinstance(parsed, list):
+                    return [ExchangeOptionResponse(**item) for item in parsed if isinstance(item, dict)]
+        except Exception as err:
+            logger.warning("read exchanges cache failed key=%s error=%s", EXCHANGES_CACHE_KEY, err)
+
+    options = _build_exchange_options()
+
+    try:
+        redis_client.setex(
+            EXCHANGES_CACHE_KEY,
+            max(EXCHANGES_CACHE_TTL_SECONDS, 60),
+            json.dumps([option.model_dump() for option in options]),
+        )
+    except Exception as err:
+        logger.warning("write exchanges cache failed key=%s error=%s", EXCHANGES_CACHE_KEY, err)
+
+    return options
 
 
 @router.get("", response_model=List[AccountResponse])

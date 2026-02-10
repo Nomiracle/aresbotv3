@@ -36,8 +36,14 @@ const workerOptions = computed<SelectOption[]>(() =>
     const publicIp = w.public_ip || w.ip || ''
     const privateIp = w.private_ip || ''
     const location = w.ip_location || ''
+    const concurrency = Number(w.concurrency || 0)
+    const activeTasks = Number(w.active_tasks || 0)
+    const availableConcurrency = Math.max(concurrency - activeTasks, 0)
 
     const details: string[] = []
+    if (concurrency > 0) {
+      details.push(`可用并发:${availableConcurrency}/${concurrency}`)
+    }
     if (publicIp) {
       details.push(`出口IP:${publicIp}`)
     }
