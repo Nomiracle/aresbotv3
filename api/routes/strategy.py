@@ -399,7 +399,7 @@ async def stop_strategy(
 
     task_id = running_info.get("task_id")
     if task_id:
-        revoke_task(task_id)
+        revoke_task(task_id, terminate=False)
 
     # Mark cooperative stop in Redis, worker loop will observe and exit.
     redis_client.request_strategy_stop(strategy_id=strategy_id)
@@ -544,7 +544,7 @@ async def batch_stop_strategies(
                 continue
             task_id = info.get("task_id")
             if task_id:
-                revoke_task(task_id)
+                revoke_task(task_id, terminate=False)
             redis_client.request_strategy_stop(strategy_id=sid)
             success.append(sid)
         except Exception:

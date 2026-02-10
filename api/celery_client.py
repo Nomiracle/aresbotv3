@@ -27,6 +27,29 @@ celery_app = Celery(
 TASK_RUN_STRATEGY = 'worker.tasks.strategy_task.run_strategy'
 
 
+def _env_flag(name: str) -> Optional[bool]:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _should_terminate_revoke() -> bool:
+    """Return whether revoke should force terminate running tasks."""
+    forced = _env_flag("CELERY_REVOKE_TERMINATE")
+    if forced is not None:
+        return forced
+
+    pool = os.environ.get("CELERY_POOL", "threads").strip().lower()
+    return pool not in {"threads"}
+
+
 def get_active_workers() -> List[Dict]:
     """Get list of active Celery workers with their info."""
     from shared.core.redis_client import get_redis_client
@@ -89,6 +112,7 @@ def send_run_strategy(
     return result.id
 
 
-def revoke_task(task_id: str, terminate: bool = True) -> None:
+def revoke_task(task_id: str, terminate: Optional[bool] = None) -> None:
     """Revoke a running task."""
-    celery_app.control.revoke(task_id, terminate=terminate, signal='SIGTERM')
+    should_terminate = _should_terminate_revoke() if terminate is None else terminate
+    celery_app.control.revoke(task_id, terminate=should_terminate, signal='SIGTERM')
