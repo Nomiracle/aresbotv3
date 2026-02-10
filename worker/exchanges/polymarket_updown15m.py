@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pytz
@@ -135,9 +135,9 @@ class PolymarketUpDown15m(BaseExchange):
             return []
 
         self._ensure_market_valid()
-        if self._is_market_closing_soon():
+        if not self._is_market_tradeable():
             return [
-                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing soon")
+                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing")
                 for _ in orders
             ]
 
@@ -326,6 +326,8 @@ class PolymarketUpDown15m(BaseExchange):
         ts = self._calculate_current_timestamp()
         token_id = self._get_market_token_by_timestamp(ts)
         if not token_id:
+            token_id = self._get_next_market_token()
+        if not token_id:
             raise RuntimeError(f"failed to resolve market for {self.symbol} at timestamp {ts}")
 
         if token_id != self._token_id:
@@ -340,20 +342,34 @@ class PolymarketUpDown15m(BaseExchange):
         if not self._token_id:
             self._refresh_market()
 
-        if self._is_market_closing_soon():
+        if self._should_rollover_market():
             self._handle_market_closing()
 
     def _seconds_until_close(self) -> int:
         """距离市场关闭的秒数."""
         if not self._market_end_time:
             return 0
-        left = self._market_end_time - int(datetime.now(timezone.utc).timestamp())
-        return max(0, left)
+        return max(0, int(self._market_end_time - time.time()))
 
-    def _is_market_closing_soon(self) -> bool:
-        if self._market_close_buffer <= 0 or not self._market_end_time:
+    def _should_rollover_market(self) -> bool:
+        if not self._market_end_time:
             return False
-        return 0 <= self._seconds_until_close() <= self._market_close_buffer
+        seconds_left = self._seconds_until_close()
+        if seconds_left <= 0:
+            return True
+        return self._market_close_buffer > 0 and seconds_left <= self._market_close_buffer
+
+    def _is_market_tradeable(self) -> bool:
+        """市场是否允许继续挂单。
+
+        经验值：临近收盘最后几秒不再挂单，避免刚下就被切换流程取消。
+        """
+        if not self._market_end_time:
+            return True
+        seconds_left = self._seconds_until_close()
+        if seconds_left <= 0:
+            return False
+        return seconds_left > max(3, self._market_close_buffer)
 
     def _handle_market_closing(self) -> None:
         """市场即将关闭: 取消买单, 清算持仓, 切换到新市场."""
@@ -457,8 +473,8 @@ class PolymarketUpDown15m(BaseExchange):
         """下限价单."""
         if not self._token_id:
             raise RuntimeError("token_id is not initialized")
-        if self._is_market_closing_soon():
-            raise RuntimeError("market is closing soon")
+        if not self._is_market_tradeable():
+            raise RuntimeError("market is closing")
 
         clob_side = BUY if side.upper() == "BUY" else SELL
         order_args = OrderArgs(
