@@ -58,6 +58,14 @@ class RedisClient:
         lock_key = f"{self.LOCK_KEY_PREFIX}{strategy_id}"
         return bool(self._client.delete(lock_key))
 
+    def release_lock_if_holder(self, strategy_id: int, task_id: str) -> bool:
+        """Release lock only when the provided task holds it."""
+        lock_key = f"{self.LOCK_KEY_PREFIX}{strategy_id}"
+        current_holder = self._client.get(lock_key)
+        if not current_holder or current_holder != task_id:
+            return False
+        return bool(self._client.delete(lock_key))
+
     def get_lock_holder(self, strategy_id: int) -> Optional[str]:
         """Get the task_id holding the lock for a strategy."""
         lock_key = f"{self.LOCK_KEY_PREFIX}{strategy_id}"
@@ -105,8 +113,41 @@ class RedisClient:
             "pending_sells": 0,
             "position_count": 0,
             "last_error": "",
+            "stop_requested_at": 0,
             "updated_at": now,
         })
+
+    def request_strategy_stop(self, strategy_id: int) -> bool:
+        """Mark a strategy as stopping.
+
+        Returns True when runtime info exists and stop request is recorded.
+        """
+        key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
+        if not self._client.exists(key):
+            return False
+
+        now = int(time.time())
+        self._client.hset(key, mapping={
+            "status": "stopping",
+            "stop_requested_at": now,
+            "updated_at": now,
+        })
+        return True
+
+    def should_stop_strategy_task(self, strategy_id: int, task_id: str) -> bool:
+        """Whether the current strategy task should stop cooperatively.
+
+        Stop when runtime info is missing, ownership changed, or status is stopping.
+        """
+        info = self.get_running_info(strategy_id)
+        if not info:
+            return True
+
+        running_task_id = info.get("task_id")
+        if running_task_id and running_task_id != task_id:
+            return True
+
+        return info.get("status") == "stopping"
 
     def update_running_status(
         self,
@@ -204,6 +245,7 @@ class RedisClient:
             "sell_orders": sell_orders,
             "position_count": int(info.get("position_count", 0)),
             "last_error": info.get("last_error", ""),
+            "stop_requested_at": int(info.get("stop_requested_at", 0) or 0),
             "updated_at": int(info.get("updated_at", 0)),
         }
 
@@ -211,6 +253,19 @@ class RedisClient:
         """Clear the running information for a strategy."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
         self._client.delete(key)
+
+    def clear_running_info_if_task(self, strategy_id: int, task_id: str) -> bool:
+        """Clear runtime info only when the provided task still owns it."""
+        key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
+        current_task_id = self._client.hget(key, "task_id")
+        if not current_task_id or current_task_id != task_id:
+            return False
+        return bool(self._client.delete(key))
+
+    def cleanup_runtime_if_task(self, strategy_id: int, task_id: str) -> None:
+        """Safely cleanup lock/runtime records for a specific task."""
+        self.release_lock_if_holder(strategy_id, task_id)
+        self.clear_running_info_if_task(strategy_id, task_id)
 
     def get_all_running_strategies(self, user_email: Optional[str] = None) -> List[Dict]:
         """Get all running strategies with their information."""

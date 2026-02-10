@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 import signal
 import socket
-import time
 from typing import Any, Dict
 
 from celery import Task
@@ -34,7 +33,11 @@ class TaskRuntime:
     worker_hostname: str
 
 
-def _cleanup_runtime(redis_client, strategy_id: int) -> None:
+def _cleanup_runtime(redis_client, strategy_id: int, task_id: str | None) -> None:
+    if task_id:
+        redis_client.cleanup_runtime_if_task(strategy_id, task_id)
+        return
+
     redis_client.release_lock(strategy_id)
     redis_client.clear_running_info(strategy_id)
 
@@ -50,6 +53,10 @@ def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, An
         sell_orders=status.get("sell_orders"),
         last_error=status.get("last_error"),
     )
+
+
+def _should_stop_task(redis_client, strategy_id: int, task_id: str) -> bool:
+    return redis_client.should_stop_strategy_task(strategy_id=strategy_id, task_id=task_id)
 
 
 def get_worker_ip() -> str:
@@ -100,7 +107,7 @@ class StrategyTask(Task):
                 status="error",
                 last_error=str(exc),
             )
-            _cleanup_runtime(redis_client, strategy_id)
+            _cleanup_runtime(redis_client, strategy_id, task_id)
         logger.error(f"Strategy task {task_id} failed: {exc}")
 
 
@@ -200,6 +207,7 @@ def run_strategy(
             strategy_config=strategy_config,
             redis_client=redis_client,
         )
+        engine.should_stop = lambda: _should_stop_task(redis_client, runtime.strategy_id, runtime.task_id)
 
         def _handle_sigterm(signum, frame):
             logger.info(f"Strategy {strategy_id} received SIGTERM, stopping engine")
@@ -248,7 +256,7 @@ def run_strategy(
                 logger.warning(f"Strategy {strategy_id} engine.stop() failed: {err}")
 
         # 5. Cleanup Redis
-        _cleanup_runtime(redis_client, strategy_id)
+        _cleanup_runtime(redis_client, strategy_id, runtime.task_id)
         logger.info(f"Strategy {strategy_id} stopped and cleaned up")
 
 

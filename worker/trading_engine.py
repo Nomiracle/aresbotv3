@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Dict, List, Optional
 from collections import deque
 from datetime import datetime
@@ -50,6 +51,8 @@ class TradingEngine:
         self._last_sync_time = 0
         self._last_status_update_time = 0
         self._status_update_interval = 5  # Update status every 5 seconds
+        self.should_stop: Optional[Callable[[], bool]] = None
+        self._stop_signal_logged = False
 
         # Status update callback for distributed deployment
         self.on_status_update: Optional[callable] = None
@@ -89,6 +92,9 @@ class TradingEngine:
         """主循环"""
         loop_index = 0
         while self._running:
+            if self._apply_external_stop(source="loop_top"):
+                break
+
             loop_index += 1
             loop_started_at = time.time()
             try:
@@ -98,13 +104,30 @@ class TradingEngine:
                 if self._current_price is None or self._current_price <= 0:
                     self._log_debug("主循环等待价格 #%s", loop_index)
                     self._update_status(force=True, source="loop_no_price")
-                    time.sleep(0.1)
+                    if self._sleep_with_stop_check(0.1, source="loop_wait_price"):
+                        break
                     continue
 
                 self._sync_orders()
+
+                if self._apply_external_stop(source="after_sync"):
+                    break
+
                 self._check_new_orders()
+
+                if self._apply_external_stop(source="after_new_orders"):
+                    break
+
                 self._check_reprice()
+
+                if self._apply_external_stop(source="after_reprice"):
+                    break
+
                 self._check_stop_loss()
+
+                if self._apply_external_stop(source="after_stop_loss"):
+                    break
+
                 self._periodic_sync()
 
                 # 主循环成功完成，清除错误
@@ -125,16 +148,63 @@ class TradingEngine:
                     time.time() - loop_started_at,
                 )
 
-                time.sleep(max(float(self.strategy.config.interval), 0.1))
+                if self._sleep_with_stop_check(
+                    max(float(self.strategy.config.interval), 0.1),
+                    source="loop_interval",
+                ):
+                    break
 
             except Exception as e:
                 self._log_exception("主循环异常 #%s: %s", loop_index, e)
                 self._last_error = str(e)
                 self._update_status(force=True, source="loop_exception")
-                time.sleep(1)
+                if self._sleep_with_stop_check(1, source="loop_exception_wait"):
+                    break
 
         self._log_info("主循环已退出")
         self._update_status(force=True, source="loop_exit")
+
+    def _apply_external_stop(self, source: str) -> bool:
+        """Apply cooperative stop signal from external controller."""
+        if not self._running:
+            return True
+
+        if self.should_stop is None:
+            return False
+
+        try:
+            should_stop = bool(self.should_stop())
+        except Exception as err:
+            self._log_warning("检查停止信号失败: %s", err)
+            return False
+
+        if not should_stop:
+            return False
+
+        if not self._stop_signal_logged:
+            self._log_info("收到外部停止信号，退出主循环 source=%s", source)
+            self._stop_signal_logged = True
+
+        self._running = False
+        self._update_status(force=True, source=f"external_stop_{source}")
+        return True
+
+    def _sleep_with_stop_check(self, duration: float, source: str) -> bool:
+        """Sleep in small slices and exit early when stop is requested."""
+        remaining = max(float(duration), 0.0)
+        if remaining == 0:
+            return self._apply_external_stop(source)
+
+        step = 0.2
+        while remaining > 0:
+            if self._apply_external_stop(source):
+                return True
+
+            sleep_for = min(step, remaining)
+            time.sleep(sleep_for)
+            remaining -= sleep_for
+
+        return self._apply_external_stop(source)
 
     def _fetch_price(self) -> None:
         """获取当前价格"""

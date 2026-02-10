@@ -401,8 +401,8 @@ async def stop_strategy(
     if task_id:
         revoke_task(task_id)
 
-    # Update status in Redis
-    redis_client.update_running_status(strategy_id=strategy_id, status="stopping")
+    # Mark cooperative stop in Redis, worker loop will observe and exit.
+    redis_client.request_strategy_stop(strategy_id=strategy_id)
 
     # Note: The task's finally block will clean up Redis when it stops
 
@@ -545,7 +545,7 @@ async def batch_stop_strategies(
             task_id = info.get("task_id")
             if task_id:
                 revoke_task(task_id)
-            redis_client.update_running_status(strategy_id=sid, status="stopping")
+            redis_client.request_strategy_stop(strategy_id=sid)
             success.append(sid)
         except Exception:
             failed.append(sid)
