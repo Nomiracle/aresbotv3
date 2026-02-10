@@ -28,6 +28,12 @@ const emit = defineEmits<{
 
 const isRunning = computed(() => props.status?.is_running ?? false)
 
+const isPolymarket15m = computed(() => props.status?.exchange === 'polymarket_updown15m')
+
+const clockSeconds = ref(Math.floor(Date.now() / 1000))
+
+const priceDigits = computed(() => (isPolymarket15m.value ? 2 : 8))
+
 // 运行时间计时器
 const runTimeSeconds = ref(0)
 let runTimeTimer: number | null = null
@@ -35,8 +41,13 @@ let runTimeTimer: number | null = null
 function updateRunTime() {
   const startTime = props.status?.start_timestamp || props.status?.started_at
   if (startTime) {
-    runTimeSeconds.value = Math.floor(Date.now() / 1000 - startTime)
+    runTimeSeconds.value = Math.floor(clockSeconds.value - startTime)
   }
+}
+
+function tickClock() {
+  clockSeconds.value = Math.floor(Date.now() / 1000)
+  updateRunTime()
 }
 
 const runTimeDisplay = computed(() => {
@@ -50,7 +61,7 @@ const runTimeDisplay = computed(() => {
 // 更新时间（多少秒前）
 const updateTimeAgo = computed(() => {
   if (!props.status?.updated_at) return '-'
-  const seconds = Math.floor(Date.now() / 1000 - props.status.updated_at)
+  const seconds = Math.floor(clockSeconds.value - props.status.updated_at)
   if (seconds < 60) return `${seconds}s前`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m前`
   return `${Math.floor(seconds / 3600)}h前`
@@ -122,8 +133,30 @@ const polymarketStatus = computed(() => {
     marketSlug: typeof extra.market_slug === 'string' ? extra.market_slug : '-',
     tokenId: typeof extra.token_id === 'string' ? extra.token_id : '',
     secondsUntilClose: toFiniteNumber(extra.seconds_until_close),
+    marketEndTime: toFiniteNumber(extra.market_end_time),
     isClosing: Boolean(extra.is_closing),
   }
+})
+
+const polymarketRemainingSeconds = computed(() => {
+  const info = polymarketStatus.value
+  if (!info) {
+    return null
+  }
+
+  if (info.marketEndTime !== null) {
+    return Math.max(0, Math.floor(info.marketEndTime - clockSeconds.value))
+  }
+
+  return info.secondsUntilClose
+})
+
+const polymarketMarketUrl = computed(() => {
+  const info = polymarketStatus.value
+  if (!info || !info.marketSlug || info.marketSlug === '-') {
+    return ''
+  }
+  return `https://polymarket.com/event/${info.marketSlug}`
 })
 
 const polymarketTooltipText = computed(() => {
@@ -143,7 +176,8 @@ const isPolymarketCritical = computed(() => {
   if (!info) {
     return false
   }
-  return info.isClosing || (info.secondsUntilClose !== null && info.secondsUntilClose <= 60)
+  const remaining = polymarketRemainingSeconds.value
+  return info.isClosing || (remaining !== null && remaining <= 60)
 })
 
 function formatCountdown(seconds: number | null): string {
@@ -209,7 +243,7 @@ const totalOrderValue = computed(() => {
 
 function formatPrice(price: number | null | undefined) {
   if (price === null || price === undefined) return '-'
-  return price.toLocaleString('en-US', { maximumFractionDigits: 8 })
+  return price.toLocaleString('en-US', { maximumFractionDigits: priceDigits.value })
 }
 
 function formatOrderValue(value: number) {
@@ -235,9 +269,75 @@ function formatOrderDisplay(order: OrderDetail, currentPrice: number | null | un
   return `${priceStr}@${qtyStr}${offset}`
 }
 
+function formatPriceRange(prices: number[]): string {
+  if (!prices.length) {
+    return '-'
+  }
+  const minPrice = Math.min(...prices)
+  const maxPrice = Math.max(...prices)
+  if (minPrice === maxPrice) {
+    return `$${formatPrice(minPrice)}`
+  }
+  return `$${formatPrice(minPrice)}~$${formatPrice(maxPrice)}`
+}
+
+function calcAvgStepPercent(prices: number[], anchorPrice: number, descending: boolean): number | null {
+  if (!prices.length || !Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+    return null
+  }
+
+  const merged = [anchorPrice, ...prices]
+  merged.sort((a, b) => (descending ? b - a : a - b))
+
+  const diffs: number[] = []
+  for (let i = 1; i < merged.length; i += 1) {
+    const prev = merged[i - 1]
+    const current = merged[i]
+    if (!prev) {
+      continue
+    }
+    diffs.push(((current - prev) / prev) * 100)
+  }
+
+  if (!diffs.length) {
+    return null
+  }
+
+  return diffs.reduce((total, value) => total + value, 0) / diffs.length
+}
+
+function formatSignedPercent(value: number, fractionDigits = 3): string {
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(fractionDigits)}%`
+}
+
+const buySummary = computed(() => {
+  const orders = sortedBuyOrders.value
+  if (!orders.length) {
+    return '-'
+  }
+  const prices = orders.map(o => o.price)
+  const currentPrice = props.status?.current_price
+  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, true) : null
+  const avgText = avgStep === null ? '' : ` (均${formatSignedPercent(avgStep)})`
+  return `${formatPriceRange(prices)}${avgText}`
+})
+
+const sellSummary = computed(() => {
+  const orders = sortedSellOrders.value
+  if (!orders.length) {
+    return '-'
+  }
+  const prices = orders.map(o => o.price)
+  const currentPrice = props.status?.current_price
+  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, false) : null
+  const avgText = avgStep === null ? '' : ` (均${formatSignedPercent(avgStep)})`
+  return `${formatPriceRange(prices)}${avgText}`
+})
+
 onMounted(() => {
-  updateRunTime()
-  runTimeTimer = window.setInterval(updateRunTime, 1000)
+  tickClock()
+  runTimeTimer = window.setInterval(tickClock, 1000)
 })
 
 onUnmounted(() => {
@@ -297,7 +397,16 @@ onUnmounted(() => {
 
     <div v-if="isRunning && polymarketStatus" class="exchange-row">
       <span class="exchange-label">市场:</span>
-      <span class="exchange-value">{{ polymarketStatus.marketSlug }}</span>
+      <a
+        v-if="polymarketMarketUrl"
+        class="exchange-value market-link"
+        :href="polymarketMarketUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {{ polymarketStatus.marketSlug }}
+      </a>
+      <span v-else class="exchange-value">{{ polymarketStatus.marketSlug }}</span>
       <el-tooltip
         effect="dark"
         placement="top"
@@ -310,7 +419,7 @@ onUnmounted(() => {
       <span class="separator">|</span>
       <span class="exchange-label">剩余:</span>
       <span :class="['exchange-value', { danger: isPolymarketCritical }]">
-        {{ formatCountdown(polymarketStatus.secondsUntilClose) }}
+        {{ formatCountdown(polymarketRemainingSeconds) }}
       </span>
       <template v-if="polymarketStatus.tokenId">
         <span class="separator">|</span>
@@ -336,30 +445,12 @@ onUnmounted(() => {
       <div class="order-line buy">
         <span class="order-label">买单({{ status?.pending_buys ?? 0 }}):</span>
         <span v-if="!sortedBuyOrders.length" class="order-empty">-</span>
-        <span v-else class="order-list">
-          <span
-            v-for="(order, idx) in sortedBuyOrders.slice(0, 3)"
-            :key="idx"
-            class="order-item"
-          >
-            {{ formatOrderDisplay(order, status?.current_price) }}
-          </span>
-          <span v-if="sortedBuyOrders.length > 3">...</span>
-        </span>
+        <span v-else class="order-summary">{{ buySummary }}</span>
       </div>
       <div class="order-line sell">
         <span class="order-label">卖单({{ status?.pending_sells ?? 0 }}):</span>
         <span v-if="!sortedSellOrders.length" class="order-empty">-</span>
-        <span v-else class="order-list">
-          <span
-            v-for="(order, idx) in sortedSellOrders.slice(0, 3)"
-            :key="idx"
-            class="order-item"
-          >
-            {{ formatOrderDisplay(order, status?.current_price) }}
-          </span>
-          <span v-if="sortedSellOrders.length > 3">...</span>
-        </span>
+        <span v-else class="order-summary">{{ sellSummary }}</span>
       </div>
     </div>
 
@@ -492,6 +583,15 @@ onUnmounted(() => {
   font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
+.market-link {
+  text-decoration: underline;
+  color: #409eff;
+}
+
+.market-link:hover {
+  color: #1e80ff;
+}
+
 .exchange-value.danger {
   color: #e6a23c;
 }
@@ -574,6 +674,11 @@ onUnmounted(() => {
 
 .order-item {
   white-space: nowrap;
+}
+
+.order-summary {
+  color: #606266;
+  font-weight: 500;
 }
 
 .error-row {

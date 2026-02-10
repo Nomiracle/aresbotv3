@@ -414,7 +414,8 @@ class PolymarketUpDown15m(BaseExchange):
                 token_id=self._token_id,
             )
             signed = self._client.create_order(order_args)
-            self._client.post_order(signed, order_type=OrderType.FOK)
+            # py-clob-client 版本差异：部分版本使用 post_order(order, order_type) 的位置参数。
+            self._client.post_order(signed, OrderType.FOK)
             logger.info("%s liquidated position qty=%s", self.log_prefix, balance)
         except Exception as e:
             logger.warning("%s liquidate position failed: %s", self.log_prefix, e)
@@ -446,7 +447,8 @@ class PolymarketUpDown15m(BaseExchange):
             token_id=self._token_id,
         )
         signed = self._client.create_order(order_args)
-        resp = self._client.post_order(signed, order_type=OrderType.GTC)
+        # py-clob-client 版本差异：部分版本使用 post_order(order, order_type) 的位置参数。
+        resp = self._client.post_order(signed, OrderType.GTC)
 
         if isinstance(resp, dict):
             return resp
