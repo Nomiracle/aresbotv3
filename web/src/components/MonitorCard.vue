@@ -58,12 +58,18 @@ const updateTimeAgo = computed(() => {
 
 // Worker 信息显示
 const workerDisplay = computed(() => {
-  const name = props.status?.worker_name
-  const hostname = props.status?.worker_hostname
-  if (name) return name
-  if (hostname) return hostname
+  const ip = props.status?.worker_ip
+  if (ip) return ip
   return ''
 })
+
+// 排序后的买单（降序）和卖单（升序）
+const sortedBuyOrders = computed(() =>
+  [...(props.status?.buy_orders ?? [])].sort((a, b) => b.price - a.price)
+)
+const sortedSellOrders = computed(() =>
+  [...(props.status?.sell_orders ?? [])].sort((a, b) => a.price - b.price)
+)
 
 // 挂单总价值
 const totalOrderValue = computed(() => {
@@ -180,30 +186,30 @@ onUnmounted(() => {
     <div class="orders-section">
       <div class="order-line buy">
         <span class="order-label">买单({{ status?.pending_buys ?? 0 }}):</span>
-        <span v-if="!status?.buy_orders?.length" class="order-empty">-</span>
+        <span v-if="!sortedBuyOrders.length" class="order-empty">-</span>
         <span v-else class="order-list">
           <span
-            v-for="(order, idx) in status.buy_orders.slice(0, 3)"
+            v-for="(order, idx) in sortedBuyOrders.slice(0, 3)"
             :key="idx"
             class="order-item"
           >
             {{ formatOrderDisplay(order, status?.current_price) }}
           </span>
-          <span v-if="status.buy_orders.length > 3">...</span>
+          <span v-if="sortedBuyOrders.length > 3">...</span>
         </span>
       </div>
       <div class="order-line sell">
         <span class="order-label">卖单({{ status?.pending_sells ?? 0 }}):</span>
-        <span v-if="!status?.sell_orders?.length" class="order-empty">-</span>
+        <span v-if="!sortedSellOrders.length" class="order-empty">-</span>
         <span v-else class="order-list">
           <span
-            v-for="(order, idx) in status.sell_orders.slice(0, 3)"
+            v-for="(order, idx) in sortedSellOrders.slice(0, 3)"
             :key="idx"
             class="order-item"
           >
             {{ formatOrderDisplay(order, status?.current_price) }}
           </span>
-          <span v-if="status.sell_orders.length > 3">...</span>
+          <span v-if="sortedSellOrders.length > 3">...</span>
         </span>
       </div>
     </div>
