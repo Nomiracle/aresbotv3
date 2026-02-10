@@ -388,6 +388,7 @@ async def start_strategy(
         "api_key": account.api_key,
         "api_secret": account.api_secret,
         "testnet": account.testnet,
+        "exchange": account.exchange,
     }
 
     # Prepare strategy config for Celery task
@@ -542,7 +543,12 @@ async def batch_start_strategies(
                 failed.append(sid)
                 continue
             _ensure_no_duplicate_symbol(strategy, account.exchange, user_email)
-            account_data = {"api_key": account.api_key, "api_secret": account.api_secret, "testnet": account.testnet}
+            account_data = {
+                "api_key": account.api_key,
+                "api_secret": account.api_secret,
+                "testnet": account.testnet,
+                "exchange": account.exchange,
+            }
             strategy_config = {
                 "symbol": strategy.symbol,
                 "base_order_size": str(strategy.base_order_size),

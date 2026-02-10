@@ -52,8 +52,10 @@ class GridStrategy(BaseStrategy):
             )
             return None
 
-        offset = grid_index * self.config.offset_percent / 100.0
-        buy_price = current_price * (1 - offset)
+        buy_price = self._calculate_buy_price(
+            current_price=current_price,
+            grid_index=grid_index,
+        )
 
         self.logger.debug(
             "buy decision grid=%s current_price=%s buy_price=%s qty=%s",
@@ -78,8 +80,10 @@ class GridStrategy(BaseStrategy):
         current_price: float,
     ) -> Optional[TradeDecision]:
         """买单成交后判断卖单"""
-        offset = self.config.sell_offset_percent / 100.0
-        sell_price = buy_price * (1 + offset)
+        sell_price = self._calculate_sell_price(
+            buy_price=buy_price,
+            current_price=current_price,
+        )
 
         return TradeDecision(
             signal=Signal.SELL,
@@ -96,27 +100,53 @@ class GridStrategy(BaseStrategy):
         grid_index: int = 1,
     ) -> Optional[float]:
         """判断是否需要改价"""
-        if is_buy:
-            offset = grid_index * self.config.offset_percent / 100.0
-            target_price = current_price * (1 - offset)
-            diff_pct = abs(order_price - target_price) / target_price * 100
+        target_price = self._calculate_reprice_target_price(
+            current_price=current_price,
+            is_buy=is_buy,
+            grid_index=grid_index,
+        )
+        if target_price is None or target_price <= 0:
+            return None
 
-            if diff_pct > self.config.reprice_threshold:
-                self.logger.debug(
-                    "reprice buy old=%s target=%s diff_pct=%.4f threshold=%.4f",
-                    order_price,
-                    target_price,
-                    diff_pct,
-                    self.config.reprice_threshold,
-                )
-                return target_price
+        diff_pct = abs(order_price - target_price) / target_price * 100
 
+        if diff_pct > self.config.reprice_threshold:
             self.logger.debug(
-                "keep buy old=%s target=%s diff_pct=%.4f threshold=%.4f",
+                "reprice %s old=%s target=%s diff_pct=%.4f threshold=%.4f",
+                "buy" if is_buy else "sell",
                 order_price,
                 target_price,
                 diff_pct,
                 self.config.reprice_threshold,
             )
+            return target_price
+
+        self.logger.debug(
+            "keep %s old=%s target=%s diff_pct=%.4f threshold=%.4f",
+            "buy" if is_buy else "sell",
+            order_price,
+            target_price,
+            diff_pct,
+            self.config.reprice_threshold,
+        )
 
         return None
+
+    def _calculate_buy_price(self, current_price: float, grid_index: int) -> float:
+        offset = grid_index * self.config.offset_percent / 100.0
+        return current_price * (1 - offset)
+
+    def _calculate_sell_price(self, buy_price: float, current_price: float) -> float:
+        del current_price
+        offset = self.config.sell_offset_percent / 100.0
+        return buy_price * (1 + offset)
+
+    def _calculate_reprice_target_price(
+        self,
+        current_price: float,
+        is_buy: bool,
+        grid_index: int,
+    ) -> Optional[float]:
+        if not is_buy:
+            return None
+        return self._calculate_buy_price(current_price=current_price, grid_index=grid_index)

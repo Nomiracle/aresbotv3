@@ -22,7 +22,9 @@ from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
 from worker.exchanges.binance_spot import BinanceSpot
+from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
 from worker.strategies.grid_strategy import GridStrategy
+from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
 
 
 logger = get_logger("celery.task")
@@ -431,20 +433,34 @@ def _create_engine(
         max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
     )
 
-    # Create instances
-    exchange = BinanceSpot(
-        api_key=api_key,
-        api_secret=api_secret,
-        symbol=strategy_config["symbol"],
-        testnet=account_data.get("testnet", False),
-    )
-    grid_strategy = GridStrategy(trading_config)
+    exchange_name = str(account_data.get("exchange") or "binance_spot").strip().lower()
+
+    if exchange_name == "polymarket_updown15m":
+        exchange = PolymarketUpDown15m(
+            api_key=api_key,
+            api_secret=api_secret,
+            symbol=strategy_config["symbol"],
+            testnet=account_data.get("testnet", False),
+            market_close_buffer=int(strategy_config.get("stop_loss_delay") or 0),
+        )
+        strategy_impl = PolymarketGridStrategy(trading_config)
+    elif exchange_name in {"binance", "binance_spot"}:
+        exchange = BinanceSpot(
+            api_key=api_key,
+            api_secret=api_secret,
+            symbol=strategy_config["symbol"],
+            testnet=account_data.get("testnet", False),
+        )
+        strategy_impl = GridStrategy(trading_config)
+    else:
+        raise ValueError(f"unsupported exchange for strategy task: {exchange_name}")
+
     risk_manager = RiskManager(risk_config)
     state_store = TradeStore(strategy_id)
 
     # Build engine
     engine = TradingEngine(
-        strategy=grid_strategy,
+        strategy=strategy_impl,
         exchange=exchange,
         risk_manager=risk_manager,
         state_store=state_store,
