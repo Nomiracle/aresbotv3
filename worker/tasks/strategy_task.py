@@ -1,8 +1,11 @@
 """Strategy execution Celery task."""
 from dataclasses import dataclass
+import json
 import signal
 import socket
-from typing import Any, Dict
+import threading
+import time
+from typing import Any, Dict, Optional
 
 from celery import Task
 
@@ -31,6 +34,135 @@ class TaskRuntime:
     task_id: str
     worker_ip: str
     worker_hostname: str
+
+
+class StrategyStopWatcher:
+    """Hybrid stop watcher: pub/sub fast-path + Redis fallback polling."""
+
+    def __init__(
+        self,
+        redis_client,
+        strategy_id: int,
+        task_id: str,
+        poll_interval_seconds: Optional[float] = None,
+    ) -> None:
+        self._redis_client = redis_client
+        self._strategy_id = strategy_id
+        self._task_id = task_id
+        env_poll_interval = os.environ.get("STRATEGY_STOP_POLL_INTERVAL", "0.8")
+        if poll_interval_seconds is not None:
+            base_poll_interval = poll_interval_seconds
+        else:
+            try:
+                base_poll_interval = float(env_poll_interval)
+            except ValueError:
+                base_poll_interval = 0.8
+
+        self._poll_interval_seconds = max(base_poll_interval, 0.2)
+
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._thread_shutdown = threading.Event()
+        self._last_poll_at = 0.0
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._thread_shutdown.clear()
+        self._thread = threading.Thread(
+            target=self._watch_pubsub_loop,
+            name=f"strategy-stop-watcher-{self._strategy_id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def should_stop(self) -> bool:
+        if self._stop_event.is_set():
+            return True
+
+        now = time.monotonic()
+        if now - self._last_poll_at < self._poll_interval_seconds:
+            return False
+
+        self._last_poll_at = now
+        should_stop = _should_stop_task(
+            self._redis_client,
+            self._strategy_id,
+            self._task_id,
+        )
+        if should_stop:
+            self._stop_event.set()
+
+        return should_stop
+
+    def stop(self) -> None:
+        self._thread_shutdown.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        self._thread = None
+
+    def _watch_pubsub_loop(self) -> None:
+        pubsub = None
+        try:
+            pubsub = self._redis_client.create_strategy_stop_pubsub(self._strategy_id)
+            while not self._thread_shutdown.is_set() and not self._stop_event.is_set():
+                message = pubsub.get_message(timeout=0.5)
+                if not message:
+                    continue
+
+                if message.get("type") != "message":
+                    continue
+
+                raw_data = message.get("data")
+                payload = _decode_stop_payload(raw_data)
+                if not payload:
+                    continue
+
+                payload_task_id = str(payload.get("task_id") or "")
+                if payload_task_id and payload_task_id != self._task_id:
+                    continue
+
+                self._stop_event.set()
+                return
+        except Exception as err:
+            logger.debug(
+                "Stop watcher pubsub loop error strategy=%s task=%s error=%s",
+                self._strategy_id,
+                self._task_id,
+                err,
+            )
+        finally:
+            if pubsub is not None:
+                try:
+                    pubsub.close()
+                except Exception:
+                    pass
+
+
+def _decode_stop_payload(raw_data: Any) -> Optional[Dict[str, Any]]:
+    if raw_data is None:
+        return None
+
+    if isinstance(raw_data, bytes):
+        try:
+            raw_data = raw_data.decode("utf-8")
+        except Exception:
+            return None
+
+    if isinstance(raw_data, str):
+        try:
+            payload = json.loads(raw_data)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    if isinstance(raw_data, dict):
+        return raw_data
+
+    return None
 
 
 def _cleanup_runtime(redis_client, strategy_id: int, task_id: str | None) -> None:
@@ -195,10 +327,10 @@ def run_strategy(
     )
 
     # 只在主线程中注册信号处理器
-    import threading
     is_main_thread = threading.current_thread() is threading.main_thread()
 
     engine: TradingEngine | None = None
+    stop_watcher: StrategyStopWatcher | None = None
     try:
         # 3. Build and run the trading engine
         engine = _create_engine(
@@ -207,7 +339,13 @@ def run_strategy(
             strategy_config=strategy_config,
             redis_client=redis_client,
         )
-        engine.should_stop = lambda: _should_stop_task(redis_client, runtime.strategy_id, runtime.task_id)
+        stop_watcher = StrategyStopWatcher(
+            redis_client=redis_client,
+            strategy_id=runtime.strategy_id,
+            task_id=runtime.task_id,
+        )
+        stop_watcher.start()
+        engine.should_stop = stop_watcher.should_stop
 
         def _handle_sigterm(signum, frame):
             logger.info(f"Strategy {strategy_id} received SIGTERM, stopping engine")
@@ -247,6 +385,9 @@ def run_strategy(
                 signal.signal(signal.SIGTERM, previous_sigterm_handler)
             except Exception:
                 pass
+
+        if stop_watcher:
+            stop_watcher.stop()
 
         # 4. Stop engine (cancel orders + close exchange)
         if engine:

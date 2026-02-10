@@ -352,11 +352,14 @@ MYSQL_PASSWORD=aresbot_password
 
 # -------------------- Redis 配置 --------------------
 REDIS_PASSWORD=redis_password
+REDIS_CONNECT_TIMEOUT=1.0 # Redis 连接超时(秒)
+REDIS_SOCKET_TIMEOUT=1.0  # Redis 读写超时(秒)
 
 # -------------------- Celery Worker 配置 --------------------
 CELERY_CONCURRENCY=4      # 单个 Worker 并发数
 WORKER_REPLICAS=2         # Worker 副本数量
 CELERY_LOG_LEVEL=info     # 日志级别
+STRATEGY_STOP_POLL_INTERVAL=0.8  # 停止信号兜底轮询间隔(秒)
 
 # -------------------- 工作节点专用 --------------------
 MASTER_HOST=192.168.1.100   # 主节点 IP
@@ -490,6 +493,8 @@ MYSQL_DATABASE=aresbot
 
 # Redis 凭证 (与主节点相同)
 REDIS_PASSWORD=your_redis_password
+REDIS_CONNECT_TIMEOUT=1.0
+REDIS_SOCKET_TIMEOUT=1.0
 
 # 安全密钥 (与主节点相同)
 ENCRYPTION_KEY=your_encryption_key
@@ -498,6 +503,7 @@ ENCRYPTION_KEY=your_encryption_key
 CELERY_CONCURRENCY=4
 WORKER_REPLICAS=4
 CELERY_LOG_LEVEL=info
+STRATEGY_STOP_POLL_INTERVAL=0.8
 ```
 
 **启动工作节点**

@@ -1,10 +1,14 @@
 """Redis client for strategy runtime state management."""
 import json
+import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
 
 import redis
+
+
+logger = logging.getLogger(__name__)
 
 
 class RedisClient:
@@ -13,6 +17,7 @@ class RedisClient:
     # Key patterns
     RUNNING_KEY_PREFIX = "strategy:running:"
     LOCK_KEY_PREFIX = "strategy:lock:"
+    STOP_CHANNEL_PREFIX = "strategy:stop:"
     WORKERS_KEY = "workers:active"
     WORKER_INFO_PREFIX = "worker:info:"
 
@@ -32,12 +37,24 @@ class RedisClient:
         self._password = password or os.environ.get('REDIS_PASSWORD') or None
         self._db = db or int(os.environ.get('REDIS_DB', 0))
 
+        try:
+            socket_timeout = float(os.environ.get('REDIS_SOCKET_TIMEOUT', '1.0'))
+        except ValueError:
+            socket_timeout = 1.0
+
+        try:
+            socket_connect_timeout = float(os.environ.get('REDIS_CONNECT_TIMEOUT', '1.0'))
+        except ValueError:
+            socket_connect_timeout = 1.0
+
         self._client = redis.Redis(
             host=self._host,
             port=self._port,
             password=self._password,
             db=self._db,
             decode_responses=True,
+            socket_timeout=max(socket_timeout, 0.1),
+            socket_connect_timeout=max(socket_connect_timeout, 0.1),
         )
 
     @property
@@ -117,6 +134,38 @@ class RedisClient:
             "updated_at": now,
         })
 
+    def get_strategy_stop_channel(self, strategy_id: int) -> str:
+        """Get pub/sub channel name for strategy stop events."""
+        return f"{self.STOP_CHANNEL_PREFIX}{strategy_id}"
+
+    def publish_strategy_stop(
+        self,
+        strategy_id: int,
+        task_id: str = "",
+        requested_at: Optional[int] = None,
+    ) -> int:
+        """Publish strategy stop event to subscribed workers.
+
+        Returns subscriber count that received the message.
+        """
+        message = json.dumps(
+            {
+                "strategy_id": strategy_id,
+                "task_id": task_id,
+                "requested_at": requested_at or int(time.time()),
+            },
+            ensure_ascii=False,
+        )
+        channel = self.get_strategy_stop_channel(strategy_id)
+        return int(self._client.publish(channel, message))
+
+    def create_strategy_stop_pubsub(self, strategy_id: int):
+        """Create a pubsub subscriber for strategy stop channel."""
+        channel = self.get_strategy_stop_channel(strategy_id)
+        pubsub = self._client.pubsub(ignore_subscribe_messages=True)
+        pubsub.subscribe(channel)
+        return pubsub
+
     def request_strategy_stop(self, strategy_id: int) -> bool:
         """Mark a strategy as stopping.
 
@@ -127,11 +176,16 @@ class RedisClient:
             return False
 
         now = int(time.time())
+        task_id = self._client.hget(key, "task_id") or ""
         self._client.hset(key, mapping={
             "status": "stopping",
             "stop_requested_at": now,
             "updated_at": now,
         })
+        try:
+            self.publish_strategy_stop(strategy_id=strategy_id, task_id=task_id, requested_at=now)
+        except Exception as err:
+            logger.debug("publish strategy stop failed strategy=%s task=%s error=%s", strategy_id, task_id, err)
         return True
 
     def should_stop_strategy_task(self, strategy_id: int, task_id: str) -> bool:
@@ -139,15 +193,22 @@ class RedisClient:
 
         Stop when runtime info is missing, ownership changed, or status is stopping.
         """
-        info = self.get_running_info(strategy_id)
-        if not info:
+        running_task_id, running_status = self.get_strategy_runtime_state(strategy_id)
+        if running_status is None:
             return True
 
-        running_task_id = info.get("task_id")
         if running_task_id and running_task_id != task_id:
             return True
 
-        return info.get("status") == "stopping"
+        return running_status == "stopping"
+
+    def get_strategy_runtime_state(self, strategy_id: int) -> tuple[Optional[str], Optional[str]]:
+        """Get minimal runtime state (task_id, status) for low-cost stop checks."""
+        key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
+        task_id, status = self._client.hmget(key, ["task_id", "status"])
+        if task_id is None and status is None:
+            return None, None
+        return task_id or "", status or ""
 
     def update_running_status(
         self,
