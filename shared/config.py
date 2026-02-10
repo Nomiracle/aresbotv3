@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from worker.core.base_strategy import StrategyConfig
+
 
 @dataclass
 class ExchangeConfig:
@@ -8,17 +10,6 @@ class ExchangeConfig:
     api_secret: str
     symbol: str
     testnet: bool = False
-
-
-@dataclass
-class TradingConfig:
-    symbol: str
-    quantity: float
-    offset_percent: float
-    sell_offset_percent: float
-    order_grid: int = 1
-    interval: float = 1.0
-    reprice_threshold: float = 0.5
 
 
 @dataclass
@@ -35,7 +26,7 @@ class RiskSettings:
 @dataclass
 class AppConfig:
     exchange: ExchangeConfig
-    trading: TradingConfig
+    trading: StrategyConfig
     risk: RiskSettings
     db_path: str = "trades.db"
     sync_interval: int = 60

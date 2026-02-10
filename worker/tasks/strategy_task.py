@@ -14,7 +14,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from worker.celery_app import app
-from shared.config import TradingConfig
+from worker.core.base_strategy import StrategyConfig
 from shared.core.redis_client import get_redis_client
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
@@ -413,7 +413,7 @@ def _create_engine(
     api_secret = decrypt_api_secret(account_data["api_secret"])
 
     # Build trading config
-    trading_config = TradingConfig(
+    trading_config = StrategyConfig(
         symbol=strategy_config["symbol"],
         quantity=float(strategy_config["base_order_size"]),
         offset_percent=float(strategy_config["buy_price_deviation"]),

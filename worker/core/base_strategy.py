@@ -28,6 +28,7 @@ class StrategyConfig:
     sell_offset_percent: float
     order_grid: int = 1
     interval: float = 1.0
+    reprice_threshold: float = 0.5
 
 
 class BaseStrategy(ABC):
@@ -71,12 +72,3 @@ class BaseStrategy(ABC):
         """判断是否需要改价，返回新价格或None"""
         pass
 
-    def calculate_buy_price(self, current_price: float, grid_index: int = 1) -> float:
-        """计算买入价格"""
-        offset = grid_index * self.config.offset_percent / 100.0
-        return current_price * (1 + offset)
-
-    def calculate_sell_price(self, buy_price: float, current_price: float) -> float:
-        """计算卖出价格"""
-        offset = self.config.sell_offset_percent / 100.0
-        return max(buy_price * (1 + offset), current_price * (1 + offset))
