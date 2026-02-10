@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from collections import deque
 from datetime import datetime
 import threading
@@ -12,7 +12,12 @@ from worker.db import TradeStore, TradeRecord
 from worker.domain import Order, OrderState, PositionTracker, RiskManager
 from worker.engine.position_syncer import PositionSyncer
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
+
+
+class _PrefixAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"{self.extra['prefix']} {msg}", kwargs
 
 
 class TradingEngine:
@@ -36,11 +41,10 @@ class TradingEngine:
             position_tracker=self.position_tracker,
         )
 
-        self._log_prefix = exchange.log_prefix
+        self.log = _PrefixAdapter(_logger, {"prefix": exchange.log_prefix})
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
-        # Use deque with maxlen to limit memory usage for stop loss records
         self._stop_loss_triggered: deque[str] = deque(maxlen=1000)
         self._lock = threading.Lock()
 
@@ -50,95 +54,79 @@ class TradingEngine:
         self._sync_interval = sync_interval
         self._last_sync_time = 0
         self._last_status_update_time = 0
-        self._status_update_interval = 5  # Update status every 5 seconds
+        self._status_update_interval = 5
         self.should_stop: Optional[Callable[[], bool]] = None
         self._stop_signal_logged = False
 
-        # Status update callback for distributed deployment
         self.on_status_update: Optional[callable] = None
 
     def start(self) -> None:
         """启动交易引擎"""
-        self._log_info("启动交易引擎")
+        self.log.info("启动交易引擎")
         self._recover_open_orders()
         self._running = True
         self._run_loop()
 
     def stop(self) -> None:
         """停止交易引擎"""
-        self._log_info("停止交易引擎")
+        self.log.info("停止交易引擎")
         self._running = False
-        self._cancel_all_pending_orders()
-        self._update_status(force=True, source="stop")
-        # 释放交易所连接
-        try:
-            self.exchange.close()
-        except Exception as e:
-            self._log_warning("关闭交易所连接失败: %s", e)
 
-    def _cancel_all_pending_orders(self) -> None:
-        """停止时取消所有挂单"""
+        # 取消所有挂单
         with self._lock:
             order_ids = [*self._pending_buys.keys(), *self._pending_sells.keys()]
-
         if order_ids:
             self.exchange.cancel_batch_orders(order_ids)
-
         with self._lock:
             self._pending_buys.clear()
             self._pending_sells.clear()
+
+        self._update_status(force=True, source="stop")
+        try:
+            self.exchange.close()
+        except Exception as e:
+            self.log.warning("关闭交易所连接失败: %s", e)
 
     def _run_loop(self) -> None:
         """主循环"""
         loop_index = 0
         while self._running:
-            if self._apply_external_stop(source="loop_top"):
+            if self._apply_external_stop():
                 break
 
             loop_index += 1
             loop_started_at = time.time()
             try:
-                self._log_debug("主循环开始 #%s", loop_index)
-                self._fetch_price()
+                self.log.debug("主循环开始 #%s", loop_index)
+
+                # 获取价格
+                try:
+                    price = self.exchange.get_ticker_price()
+                    if isinstance(price, (int, float)) and price > 0:
+                        self._current_price = price
+                except Exception as e:
+                    self.log.warning("获取价格失败: %s", e)
 
                 if self._current_price is None or self._current_price <= 0:
-                    self._log_debug("主循环等待价格 #%s", loop_index)
+                    self.log.debug("主循环等待价格 #%s", loop_index)
                     self._update_status(force=True, source="loop_no_price")
-                    if self._sleep_with_stop_check(0.1, source="loop_wait_price"):
+                    if self._sleep_with_stop_check(0.1):
                         break
                     continue
 
                 self._sync_orders()
-
-                if self._apply_external_stop(source="after_sync"):
-                    break
-
                 self._check_new_orders()
-
-                if self._apply_external_stop(source="after_new_orders"):
-                    break
-
                 self._check_reprice()
-
-                if self._apply_external_stop(source="after_reprice"):
-                    break
-
                 self._check_stop_loss()
-
-                if self._apply_external_stop(source="after_stop_loss"):
-                    break
-
                 self._periodic_sync()
 
-                # 主循环成功完成，清除错误
                 self._last_error = None
-                # 每轮主循环结束后强制刷新一次状态（Redis）
                 self._update_status(force=True, source="loop_complete")
 
                 with self._lock:
                     pending_buys = len(self._pending_buys)
                     pending_sells = len(self._pending_sells)
-                self._log_debug(
+                self.log.debug(
                     "主循环完成 #%s price=%s buys=%s sells=%s positions=%s cost=%.3fs",
                     loop_index,
                     self._current_price,
@@ -150,22 +138,21 @@ class TradingEngine:
 
                 if self._sleep_with_stop_check(
                     max(float(self.strategy.config.interval), 0.1),
-                    source="loop_interval",
                 ):
                     break
 
             except Exception as e:
-                self._log_exception("主循环异常 #%s: %s", loop_index, e)
+                self.log.exception("主循环异常 #%s: %s", loop_index, e)
                 self._last_error = str(e)
                 self._update_status(force=True, source="loop_exception")
-                if self._sleep_with_stop_check(1, source="loop_exception_wait"):
+                if self._sleep_with_stop_check(1):
                     break
 
-        self._log_info("主循环已退出")
+        self.log.info("主循环已退出")
         self._update_status(force=True, source="loop_exit")
 
-    def _apply_external_stop(self, source: str) -> bool:
-        """Apply cooperative stop signal from external controller."""
+    def _apply_external_stop(self) -> bool:
+        """检查外部停止信号"""
         if not self._running:
             return True
 
@@ -175,52 +162,42 @@ class TradingEngine:
         try:
             should_stop = bool(self.should_stop())
         except Exception as err:
-            self._log_warning("检查停止信号失败: %s", err)
+            self.log.warning("检查停止信号失败: %s", err)
             return False
 
         if not should_stop:
             return False
 
         if not self._stop_signal_logged:
-            self._log_info("收到外部停止信号，退出主循环 source=%s", source)
+            self.log.info("收到外部停止信号，退出主循环")
             self._stop_signal_logged = True
 
         self._running = False
-        self._update_status(force=True, source=f"external_stop_{source}")
+        self._update_status(force=True, source="external_stop")
         return True
 
-    def _sleep_with_stop_check(self, duration: float, source: str) -> bool:
-        """Sleep in small slices and exit early when stop is requested."""
+    def _sleep_with_stop_check(self, duration: float) -> bool:
+        """分片睡眠，支持提前退出"""
         remaining = max(float(duration), 0.0)
         if remaining == 0:
-            return self._apply_external_stop(source)
+            return self._apply_external_stop()
 
         step = 0.2
         while remaining > 0:
-            if self._apply_external_stop(source):
+            if self._apply_external_stop():
                 return True
-
             sleep_for = min(step, remaining)
             time.sleep(sleep_for)
             remaining -= sleep_for
 
-        return self._apply_external_stop(source)
-
-    def _fetch_price(self) -> None:
-        """获取当前价格"""
-        try:
-            price = self.exchange.get_ticker_price()
-            if isinstance(price, (int, float)) and price > 0:
-                self._current_price = price
-        except Exception as e:
-            self._log_warning("获取价格失败: %s", e)
+        return self._apply_external_stop()
 
     def _recover_open_orders(self) -> None:
         """启动时恢复挂单缓存"""
         try:
             open_orders = self.exchange.get_open_orders()
         except Exception as err:
-            self._log_warning("恢复挂单失败: %s", err)
+            self.log.warning("恢复挂单失败: %s", err)
             return
 
         if not open_orders:
@@ -249,7 +226,7 @@ class TradingEngine:
             self._pending_buys.update(recovered_buys)
             self._pending_sells.update(recovered_sells)
 
-        self._log_info("启动恢复挂单 buys=%s sells=%s", len(recovered_buys), len(recovered_sells))
+        self.log.info("启动恢复挂单 buys=%s sells=%s", len(recovered_buys), len(recovered_sells))
 
     def _sync_orders(self) -> None:
         """同步订单状态"""
@@ -258,100 +235,46 @@ class TradingEngine:
             exchange_order_map = {o.order_id: o for o in exchange_orders}
 
             with self._lock:
-                pending_buy_ids = list(self._pending_buys.keys())
-                pending_sell_ids = list(self._pending_sells.keys())
+                pending_ids = list(self._pending_buys.keys()) + list(self._pending_sells.keys())
 
-            updates = self._check_order_status(
-                pending_order_ids=pending_buy_ids + pending_sell_ids,
-                exchange_order_map=exchange_order_map,
-            )
-            for ex_order in updates:
-                self._apply_order_update(ex_order)
+            for order_id in pending_ids:
+                ex_order = exchange_order_map.get(order_id)
+                if ex_order is None:
+                    ex_order = self.exchange.get_order(order_id)
+                    if ex_order is None:
+                        continue
+
+                if ex_order.status == OrderStatus.FILLED:
+                    # 处理完全成交
+                    with self._lock:
+                        buy_order = self._pending_buys.pop(order_id, None)
+                        sell_order = self._pending_sells.pop(order_id, None) if buy_order is None else None
+
+                    if buy_order is not None:
+                        self._handle_buy_filled(buy_order, ex_order)
+                    elif sell_order is not None:
+                        self._handle_sell_filled(sell_order, ex_order)
+
+                elif ex_order.status == OrderStatus.CANCELLED:
+                    with self._lock:
+                        self._pending_buys.pop(order_id, None)
+                        self._pending_sells.pop(order_id, None)
+                    self.log.info("订单已取消: %s", order_id)
+
+                elif ex_order.status == OrderStatus.PARTIALLY_FILLED:
+                    with self._lock:
+                        order = self._pending_buys.get(order_id) or self._pending_sells.get(order_id)
+                        if order is None:
+                            continue
+                        old_filled = order.filled_quantity
+                        order.update_fill(ex_order.filled_quantity, ex_order.price)
+                        new_filled = ex_order.filled_quantity - old_filled
+
+                    if new_filled > 0:
+                        self._save_trade(order, ex_order.price, quantity=new_filled)
 
         except Exception as e:
-            self._log_warning("同步订单失败: %s", e)
-
-    def _check_order_status(
-        self,
-        pending_order_ids: List[str],
-        exchange_order_map: Dict[str, ExchangeOrder],
-    ) -> List[ExchangeOrder]:
-        """检查订单状态变化"""
-        updates: List[ExchangeOrder] = []
-        for order_id in pending_order_ids:
-            ex_order = exchange_order_map.get(order_id)
-            if ex_order is None:
-                ex_order = self.exchange.get_order(order_id)
-                if ex_order is None:
-                    continue
-
-            if ex_order.status in {
-                OrderStatus.FILLED,
-                OrderStatus.CANCELLED,
-                OrderStatus.PARTIALLY_FILLED,
-            }:
-                updates.append(ex_order)
-
-        return updates
-
-    def _apply_order_update(self, ex_order: ExchangeOrder) -> None:
-        if ex_order.status == OrderStatus.FILLED:
-            self._apply_order_filled(ex_order)
-        elif ex_order.status == OrderStatus.CANCELLED:
-            self._apply_order_cancelled(ex_order)
-        elif ex_order.status == OrderStatus.PARTIALLY_FILLED:
-            self._apply_order_partially_filled(ex_order)
-
-    def _apply_order_filled(self, ex_order: ExchangeOrder) -> None:
-        """处理订单成交"""
-        order_id = ex_order.order_id
-        buy_order: Optional[Order] = None
-        sell_order: Optional[Order] = None
-
-        with self._lock:
-            if order_id in self._pending_buys:
-                buy_order = self._pending_buys.pop(order_id)
-            elif order_id in self._pending_sells:
-                sell_order = self._pending_sells.pop(order_id)
-
-        if buy_order is not None:
-            self._handle_buy_filled(buy_order, ex_order)
-            return
-
-        if sell_order is not None:
-            self._handle_sell_filled(sell_order, ex_order)
-
-    def _apply_order_partially_filled(self, ex_order: ExchangeOrder) -> None:
-        """处理部分成交"""
-        order_id = ex_order.order_id
-        order: Optional[Order] = None
-        new_filled = 0.0
-
-        with self._lock:
-            if order_id in self._pending_buys:
-                order = self._pending_buys[order_id]
-            elif order_id in self._pending_sells:
-                order = self._pending_sells[order_id]
-
-            if order is None:
-                return
-
-            old_filled = order.filled_quantity
-            order.update_fill(ex_order.filled_quantity, ex_order.price)
-            new_filled = ex_order.filled_quantity - old_filled
-
-        if new_filled > 0:
-            self._save_partial_fill(order, new_filled, ex_order.price)
-
-    def _apply_order_cancelled(self, ex_order: ExchangeOrder) -> None:
-        """处理订单取消"""
-        order_id = ex_order.order_id
-
-        with self._lock:
-            self._pending_buys.pop(order_id, None)
-            self._pending_sells.pop(order_id, None)
-
-        self._log_info("订单已取消: %s", order_id)
+            self.log.warning("同步订单失败: %s", e)
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单"""
@@ -363,7 +286,7 @@ class TradingEngine:
             self.position_tracker.get_position_count()
         )
         if not can_open:
-            self._log_debug("跳过新开仓: %s", reason)
+            self.log.debug("跳过新开仓: %s", reason)
             return
 
         decision = self.strategy.should_buy(
@@ -373,7 +296,7 @@ class TradingEngine:
         )
 
         if decision:
-            self._log_debug(
+            self.log.debug(
                 "生成买单决策 price=%s qty=%s grid=%s",
                 decision.price,
                 decision.quantity,
@@ -381,7 +304,7 @@ class TradingEngine:
             )
             self._place_buy_order(decision.price, decision.quantity, decision.grid_index)
         else:
-            self._log_debug(
+            self.log.debug(
                 "无新买单决策 active_buys=%s active_sells=%s price=%s",
                 active_buys,
                 active_sells,
@@ -394,13 +317,9 @@ class TradingEngine:
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(quantity, rules)
 
-        self._log_debug(
+        self.log.debug(
             "准备下买单 raw_price=%s raw_qty=%s aligned_price=%s aligned_qty=%s grid=%s",
-            price,
-            quantity,
-            aligned_price,
-            aligned_qty,
-            grid_index,
+            price, quantity, aligned_price, aligned_qty, grid_index,
         )
 
         results = self.exchange.place_batch_orders([{
@@ -422,11 +341,11 @@ class TradingEngine:
             )
             with self._lock:
                 self._pending_buys[result.order_id] = order
-            self._log_info("买单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
+            self.log.info("买单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"买单下单失败: {error_msg}"
-            self._log_debug("买单下单失败 aligned_price=%s aligned_qty=%s error=%s", aligned_price, aligned_qty, error_msg)
+            self.log.debug("买单下单失败 aligned_price=%s aligned_qty=%s error=%s", aligned_price, aligned_qty, error_msg)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> None:
         """下卖单"""
@@ -436,12 +355,9 @@ class TradingEngine:
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(sell_qty, rules)
 
-        self._log_debug(
+        self.log.debug(
             "准备下卖单 buy_order=%s raw_price=%s aligned_price=%s aligned_qty=%s",
-            buy_order.order_id,
-            price,
-            aligned_price,
-            aligned_qty,
+            buy_order.order_id, price, aligned_price, aligned_qty,
         )
 
         results = self.exchange.place_batch_orders([{
@@ -464,11 +380,11 @@ class TradingEngine:
             )
             with self._lock:
                 self._pending_sells[result.order_id] = order
-            self._log_info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
+            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"卖单下单失败: {error_msg}"
-            self._log_debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
+            self.log.debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
 
     def _handle_buy_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
         """处理买单成交"""
@@ -493,7 +409,7 @@ class TradingEngine:
         if decision:
             self._place_sell_order(order, decision.price)
 
-        self._log_info("买单成交: %s, 价格=%s, 数量=%s", order.order_id, filled_price, order.filled_quantity)
+        self.log.info("买单成交: %s, 价格=%s, 数量=%s", order.order_id, filled_price, order.filled_quantity)
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
         """处理卖单成交"""
@@ -506,43 +422,26 @@ class TradingEngine:
             pnl = (filled_price - position.entry_price) * order.filled_quantity
             self.risk_manager.record_trade_result(pnl)
 
-        self._save_trade(order, filled_price, pnl)
+        self._save_trade(order, filled_price, pnl=pnl)
 
-        self._log_info("卖单成交: %s, 价格=%s, 盈亏=%s", order.order_id, filled_price, pnl)
+        self.log.info("卖单成交: %s, 价格=%s, 盈亏=%s", order.order_id, filled_price, pnl)
 
-    def _save_trade(self, order: Order, filled_price: float, pnl: Optional[float] = None) -> None:
-        """保存成交记录"""
+    def _save_trade(
+        self, order: Order, price: float,
+        pnl: Optional[float] = None,
+        quantity: Optional[float] = None,
+    ) -> None:
+        """保存成交记录（完全成交或部分成交）"""
+        qty = quantity if quantity is not None else order.filled_quantity
         fee_rate = self.exchange.get_fee_rate()
-        fee = order.filled_quantity * filled_price * fee_rate
-
-        trade = TradeRecord(
-            id=None,
-            symbol=order.symbol,
-            side=order.side,
-            price=filled_price,
-            quantity=order.filled_quantity,
-            fee=fee,
-            pnl=pnl,
-            order_id=order.order_id,
-            grid_index=order.grid_index,
-            related_order_id=order.related_order_id,
-            created_at=datetime.now(),
-        )
-        self.state_store.save_trade(trade)
-
-    def _save_partial_fill(self, order: Order, quantity: float, price: float) -> None:
-        """保存部分成交记录"""
-        fee_rate = self.exchange.get_fee_rate()
-        fee = quantity * price * fee_rate
-
         trade = TradeRecord(
             id=None,
             symbol=order.symbol,
             side=order.side,
             price=price,
-            quantity=quantity,
-            fee=fee,
-            pnl=None,
+            quantity=qty,
+            fee=qty * price * fee_rate,
+            pnl=pnl,
             order_id=order.order_id,
             grid_index=order.grid_index,
             related_order_id=order.related_order_id,
@@ -556,7 +455,6 @@ class TradingEngine:
             buy_orders = list(self._pending_buys.values())
             sell_orders = list(self._pending_sells.values())
 
-        # 收集需要改价的订单
         to_cancel = []
         to_place = []
 
@@ -601,9 +499,8 @@ class TradingEngine:
         if not to_cancel:
             return
 
-        self._log_debug("触发改价 cancel_count=%s", len(to_cancel))
+        self.log.debug("触发改价 cancel_count=%s", len(to_cancel))
 
-        # 批量取消
         cancel_results = self.exchange.cancel_batch_orders(to_cancel)
         cancelled_ids = {
             result.order_id
@@ -617,14 +514,12 @@ class TradingEngine:
         if not place_candidates:
             return
 
-        # 批量下新单
         place_params = [
             {'side': p['side'], 'price': p['price'], 'quantity': p['quantity']}
             for p in place_candidates
         ]
         results = self.exchange.place_batch_orders(place_params)
 
-        # 更新本地订单
         with self._lock:
             for index, payload in enumerate(place_candidates):
                 old_order = payload['_order']
@@ -652,9 +547,9 @@ class TradingEngine:
                     else:
                         self._pending_sells[result.order_id] = new_order
 
-                    self._log_info("订单改价成功: %s -> %s, 新价格=%s", old_order.order_id, result.order_id, new_price)
+                    self.log.info("订单改价成功: %s -> %s, 新价格=%s", old_order.order_id, result.order_id, new_price)
                 else:
-                    self._log_warning("订单改价重下失败，已移除旧单: %s", old_order.order_id)
+                    self.log.warning("订单改价重下失败，已移除旧单: %s", old_order.order_id)
 
     def _check_stop_loss(self) -> None:
         """检查止损"""
@@ -674,9 +569,8 @@ class TradingEngine:
 
     def _execute_stop_loss(self, position, reason: str) -> None:
         """执行止损"""
-        self._log_warning("触发止损: %s, 原因=%s", position.order_id, reason)
+        self.log.warning("触发止损: %s, 原因=%s", position.order_id, reason)
 
-        # 取消相关卖单
         cancel_ids = []
         with self._lock:
             for order_id, order in list(self._pending_sells.items()):
@@ -687,13 +581,12 @@ class TradingEngine:
         if cancel_ids:
             self.exchange.cancel_batch_orders(cancel_ids)
 
-        # 下止损单
         rules = self.exchange.get_trading_rules()
         stop_price = self.exchange.align_price(self._current_price * 0.999, rules)
         stop_qty = self.exchange.align_quantity(position.quantity, rules)
 
         if stop_qty <= 0:
-            self._log_warning("止损数量无效，跳过下单: %s", position.order_id)
+            self.log.warning("止损数量无效，跳过下单: %s", position.order_id)
             return
 
         results = self.exchange.place_batch_orders([{
@@ -703,7 +596,7 @@ class TradingEngine:
         }])
 
         if results and results[0].success:
-            self._log_info("止损单已下: %s", results[0].order_id)
+            self.log.info("止损单已下: %s", results[0].order_id)
 
     def _periodic_sync(self) -> None:
         """定期同步"""
@@ -716,23 +609,15 @@ class TradingEngine:
         with self._lock:
             pending_sells_copy = dict(self._pending_sells)
 
-        self._log_debug("触发定期同步 pending_sells=%s", len(pending_sells_copy))
-        self._log_memory_stats()
-        self.position_syncer.sync(pending_sells_copy)
-        self._repair_positions_and_orders(pending_sells_copy)
+        self.log.debug("触发定期同步 pending_sells=%s", len(pending_sells_copy))
 
-    def _log_memory_stats(self) -> None:
-        """Log memory usage statistics for monitoring."""
+        # 内存统计
         try:
             import psutil
             process = psutil.Process()
             mem = process.memory_info()
-
-            orders_cache_size = 0
-            if hasattr(self.exchange, '_orders_cache'):
-                orders_cache_size = len(self.exchange._orders_cache)
-
-            self._log_info(
+            orders_cache_size = len(self.exchange._orders_cache) if hasattr(self.exchange, '_orders_cache') else 0
+            self.log.info(
                 "Memory: RSS=%dMB orders_cache=%d positions=%d stop_loss_triggered=%d",
                 mem.rss // 1024 // 1024,
                 orders_cache_size,
@@ -740,10 +625,12 @@ class TradingEngine:
                 len(self._stop_loss_triggered),
             )
         except ImportError:
-            # psutil not installed, skip memory logging
             pass
         except Exception as e:
-            self._log_debug("Memory stats error: %s", e)
+            self.log.debug("Memory stats error: %s", e)
+
+        self.position_syncer.sync(pending_sells_copy)
+        self._repair_positions_and_orders(pending_sells_copy)
 
     def _repair_positions_and_orders(self, pending_sells: Dict[str, Order]) -> None:
         """最小修复：补卖单、取消多余卖单"""
@@ -790,7 +677,6 @@ class TradingEngine:
         self._last_status_update_time = now
 
         with self._lock:
-            # 构建挂单详情列表：[{price, quantity}, ...]
             buy_orders = [
                 {"price": o.price, "quantity": o.quantity}
                 for o in self._pending_buys.values()
@@ -812,55 +698,13 @@ class TradingEngine:
 
         try:
             self.on_status_update(status)
-            self._log_debug(
+            self.log.debug(
                 "状态已更新 source=%s force=%s price=%s buys=%s sells=%s positions=%s",
-                source,
-                force,
+                source, force,
                 status["current_price"],
                 status["pending_buys"],
                 status["pending_sells"],
                 status["position_count"],
             )
         except Exception as e:
-            self._log_warning("状态更新回调失败: %s", e)
-
-    def get_status(self) -> dict:
-        """获取引擎状态"""
-        with self._lock:
-            return {
-                "running": self._running,
-                "current_price": self._current_price,
-                "pending_buys": len(self._pending_buys),
-                "pending_sells": len(self._pending_sells),
-                "positions": self.position_tracker.get_position_count(),
-                "risk": self.risk_manager.get_status(),
-            }
-
-    @property
-    def current_price(self) -> Optional[float]:
-        """获取当前价格"""
-        return self._current_price
-
-    @property
-    def pending_buys(self) -> Dict[str, Order]:
-        """获取挂买单"""
-        with self._lock:
-            return dict(self._pending_buys)
-
-    @property
-    def pending_sells(self) -> Dict[str, Order]:
-        """获取挂卖单"""
-        with self._lock:
-            return dict(self._pending_sells)
-
-    def _log_debug(self, message: str, *args: object) -> None:
-        logger.debug("%s " + message, self._log_prefix, *args)
-
-    def _log_info(self, message: str, *args: object) -> None:
-        logger.info("%s " + message, self._log_prefix, *args)
-
-    def _log_warning(self, message: str, *args: object) -> None:
-        logger.warning("%s " + message, self._log_prefix, *args)
-
-    def _log_exception(self, message: str, *args: object) -> None:
-        logger.exception("%s " + message, self._log_prefix, *args)
+            self.log.warning("状态更新回调失败: %s", e)
