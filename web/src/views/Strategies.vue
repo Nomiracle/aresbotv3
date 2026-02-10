@@ -230,8 +230,15 @@ async function handleBatchDelete() {
 }
 
 onMounted(() => {
-  fetchStrategies().then(() => fetchAllStatus())
-  fetchWorkers()
+  fetchStrategies()
+    .then(() => fetchAllStatus())
+    .catch(() => {
+      // 错误已由拦截器处理
+    })
+
+  fetchWorkers().catch(() => {
+    // 错误已由拦截器处理
+  })
 })
 </script>
 

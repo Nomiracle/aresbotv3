@@ -1,4 +1,5 @@
 """Celery client for API service."""
+import logging
 import os
 from typing import List, Dict, Optional
 
@@ -26,6 +27,8 @@ celery_app = Celery(
 # Task name constant
 TASK_RUN_STRATEGY = 'worker.tasks.strategy_task.run_strategy'
 
+logger = logging.getLogger(__name__)
+
 
 def _env_flag(name: str) -> Optional[bool]:
     value = os.environ.get(name)
@@ -50,21 +53,39 @@ def _should_terminate_revoke() -> bool:
     return pool not in {"threads"}
 
 
+def _inspect_timeout_seconds() -> float:
+    raw = os.environ.get("CELERY_INSPECT_TIMEOUT", "1.2")
+    try:
+        timeout_seconds = float(raw)
+    except ValueError:
+        timeout_seconds = 1.2
+    return max(timeout_seconds, 0.2)
+
+
 def get_active_workers() -> List[Dict]:
     """Get list of active Celery workers with their info."""
     from shared.core.redis_client import get_redis_client
 
-    inspect = celery_app.control.inspect()
-    ping_result = inspect.ping() or {}
-    stats_result = inspect.stats() or {}
-    active_result = inspect.active() or {}
     redis_client = get_redis_client()
+    redis_workers = {item["name"]: item for item in redis_client.get_all_workers_info()}
+
+    ping_result: Dict = {}
+    stats_result: Dict = {}
+    active_result: Dict = {}
+    try:
+        inspect = celery_app.control.inspect(timeout=_inspect_timeout_seconds())
+        ping_result = inspect.ping() or {}
+        stats_result = inspect.stats() or {}
+        active_result = inspect.active() or {}
+    except Exception as err:
+        logger.warning("celery inspect failed, fallback to redis workers: %s", err)
 
     workers = []
-    for worker_name in ping_result:
+    worker_names = set(ping_result.keys()) or set(redis_workers.keys())
+    for worker_name in sorted(worker_names):
         stats = stats_result.get(worker_name, {})
         # 从 Redis 获取 worker 详细信息
-        worker_info = redis_client.get_worker_info(worker_name) or {}
+        worker_info = redis_client.get_worker_info(worker_name) or redis_workers.get(worker_name, {})
         # worker_name format: worker@hostname
         hostname = worker_info.get("hostname") or (worker_name.split('@')[-1] if '@' in worker_name else worker_name)
         worker_public_ip = worker_info.get("public_ip", "")

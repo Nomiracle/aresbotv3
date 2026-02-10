@@ -1,5 +1,6 @@
 """Worker management routes."""
 from typing import List
+import asyncio
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -23,5 +24,5 @@ class WorkerInfo(BaseModel):
 @router.get("", response_model=List[WorkerInfo])
 async def list_workers():
     """Get list of active Celery workers."""
-    workers = get_active_workers()
+    workers = await asyncio.to_thread(get_active_workers)
     return [WorkerInfo(**w) for w in workers]
