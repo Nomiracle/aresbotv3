@@ -392,6 +392,38 @@ class BinanceSpot(BaseExchange):
             except Exception as err:
                 logger.warning("%s on_order_update callback error: %s", context.log_prefix, err)
 
+
+    @staticmethod
+    def _should_ignore_ws_cancelled_error(loop_context: Dict[str, Any]) -> bool:
+        """Ignore noisy ccxt websocket cancellation callbacks during shutdown."""
+        exception = loop_context.get("exception")
+        if not isinstance(exception, asyncio.CancelledError):
+            return False
+
+        handle = loop_context.get("handle")
+        if handle is None:
+            return False
+
+        handle_text = repr(handle)
+        return (
+            "ccxt/async_support/base/ws/client.py" in handle_text
+            or "ccxt/async_support/base/ws/future.py" in handle_text
+            or "after_interrupt" in handle_text
+            or "Future.race" in handle_text
+        )
+
+    @classmethod
+    def _build_loop_exception_handler(
+        cls,
+    ) -> Callable[[asyncio.AbstractEventLoop, Dict[str, Any]], None]:
+        def _handler(loop: asyncio.AbstractEventLoop, loop_context: Dict[str, Any]) -> None:
+            if cls._should_ignore_ws_cancelled_error(loop_context):
+                return
+
+            loop.default_exception_handler(loop_context)
+
+        return _handler
+
     @classmethod
     def _run_shared_loop(cls, key: SharedKey) -> None:
         with cls._shared_lock:
@@ -401,6 +433,7 @@ class BinanceSpot(BaseExchange):
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        loop.set_exception_handler(cls._build_loop_exception_handler())
         with context.lock:
             context.loop = loop
 
