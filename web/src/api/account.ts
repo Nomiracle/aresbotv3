@@ -1,6 +1,12 @@
 import api from './index'
 import type { Account, AccountCreate } from '@/types'
 
+export interface TradingFee {
+  symbol: string
+  maker: number
+  taker: number
+}
+
 export const accountApi = {
   getAll(): Promise<Account[]> {
     return api.get('/accounts')
@@ -20,5 +26,13 @@ export const accountApi = {
 
   delete(id: number): Promise<void> {
     return api.delete(`/accounts/${id}`)
+  },
+
+  getSymbols(accountId: number): Promise<string[]> {
+    return api.get(`/accounts/${accountId}/symbols`)
+  },
+
+  fetchTradingFee(accountId: number, symbol: string): Promise<TradingFee> {
+    return api.get(`/accounts/${accountId}/trading-fee`, { params: { symbol } })
   },
 }

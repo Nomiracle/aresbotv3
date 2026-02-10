@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
+import { computed, ref, reactive, watch, onMounted } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import type { Strategy, StrategyCreate, Account } from '@/types'
-import { accountApi } from '@/api/account'
+import { accountApi, type TradingFee } from '@/api/account'
 import { getWorkers, type WorkerInfo } from '@/api/worker'
+
+const symbolsCache = new Map<number, string[]>()
+const tradingFeeCache = new Map<string, TradingFee>()
 
 const props = defineProps<{
   visible: boolean
@@ -18,6 +21,18 @@ const emit = defineEmits<{
 const formRef = ref<FormInstance>()
 const accounts = ref<Account[]>([])
 const workers = ref<WorkerInfo[]>([])
+const symbols = ref<string[]>([])
+const symbolsLoading = ref(false)
+const tradingFee = ref<TradingFee | null>(null)
+const tradingFeeLoading = ref(false)
+
+const symbolOptions = computed(() => {
+  const options = new Set(symbols.value)
+  if (form.symbol) {
+    options.add(form.symbol)
+  }
+  return Array.from(options)
+})
 
 const defaultForm = {
   account_id: undefined as number | undefined,
@@ -41,11 +56,75 @@ const form = reactive({ ...defaultForm })
 const rules: FormRules = {
   account_id: [{ required: true, message: '请选择账户', trigger: 'change', type: 'number' }],
   name: [{ required: true, message: '请输入策略名称', trigger: 'blur' }],
-  symbol: [{ required: true, message: '请输入交易对', trigger: 'blur' }],
+  symbol: [{ required: true, message: '请选择交易对', trigger: 'change' }],
   base_order_size: [{ required: true, message: '请输入基础订单量', trigger: 'blur' }],
   buy_price_deviation: [{ required: true, message: '请输入买入偏差', trigger: 'blur' }],
   sell_price_deviation: [{ required: true, message: '请输入卖出偏差', trigger: 'blur' }],
   grid_levels: [{ required: true, message: '请输入网格层数', trigger: 'blur' }],
+}
+
+function getTradingFeeCacheKey(accountId: number, symbol: string): string {
+  return `${accountId}:${symbol}`
+}
+
+async function fetchSymbols(accountId: number) {
+  const selectedAccountId = form.account_id
+  if (!selectedAccountId || selectedAccountId !== accountId) {
+    return
+  }
+
+  const cachedSymbols = symbolsCache.get(accountId)
+  if (cachedSymbols) {
+    symbols.value = cachedSymbols
+    return
+  }
+
+  symbolsLoading.value = true
+  try {
+    const data = await accountApi.getSymbols(accountId)
+    symbolsCache.set(accountId, data)
+    if (form.account_id === accountId) {
+      symbols.value = data
+    }
+  } catch {
+    if (form.account_id === accountId) {
+      symbols.value = []
+    }
+  } finally {
+    if (form.account_id === accountId) {
+      symbolsLoading.value = false
+    }
+  }
+}
+
+async function fetchTradingFee(accountId: number, symbol: string) {
+  const cacheKey = getTradingFeeCacheKey(accountId, symbol)
+  const cachedFee = tradingFeeCache.get(cacheKey)
+  if (cachedFee) {
+    tradingFee.value = cachedFee
+    return
+  }
+
+  tradingFeeLoading.value = true
+  try {
+    const fee = await accountApi.fetchTradingFee(accountId, symbol)
+    tradingFeeCache.set(cacheKey, fee)
+    if (form.account_id === accountId && form.symbol === symbol) {
+      tradingFee.value = fee
+    }
+  } catch {
+    if (form.account_id === accountId && form.symbol === symbol) {
+      tradingFee.value = null
+    }
+  } finally {
+    if (form.account_id === accountId && form.symbol === symbol) {
+      tradingFeeLoading.value = false
+    }
+  }
+}
+
+function formatFeeRate(value: number): string {
+  return `${(value * 100).toFixed(4)}%`
 }
 
 async function fetchAccounts() {
@@ -88,8 +167,58 @@ watch(() => props.visible, (val) => {
     } else {
       Object.assign(form, { ...defaultForm, account_id: undefined, worker_name: null })
     }
+
+    tradingFee.value = null
+    tradingFeeLoading.value = false
+
+    if (form.account_id) {
+      fetchSymbols(form.account_id)
+    } else {
+      symbols.value = []
+    }
   }
 })
+
+watch(
+  () => form.account_id,
+  async (newAccountId, oldAccountId) => {
+    tradingFee.value = null
+    tradingFeeLoading.value = false
+
+    if (!newAccountId) {
+      symbols.value = []
+      form.symbol = ''
+      return
+    }
+
+    if (oldAccountId !== undefined && oldAccountId !== newAccountId) {
+      symbols.value = []
+    }
+
+    await fetchSymbols(newAccountId)
+
+    if (oldAccountId !== undefined && oldAccountId !== newAccountId && form.symbol) {
+      const currentOptions = symbolsCache.get(newAccountId) || symbols.value
+      if (!currentOptions.includes(form.symbol)) {
+        form.symbol = ''
+      }
+    }
+  }
+)
+
+watch(
+  () => [form.account_id, form.symbol, props.visible] as const,
+  async ([accountId, symbol, visible]) => {
+    tradingFee.value = null
+    tradingFeeLoading.value = false
+
+    if (!visible || !accountId || !symbol) {
+      return
+    }
+
+    await fetchTradingFee(accountId, symbol)
+  }
+)
 
 function handleClose() {
   emit('update:visible', false)
@@ -131,7 +260,26 @@ onMounted(() => {
         <el-input v-model="form.name" placeholder="例如：BTC 网格策略" />
       </el-form-item>
       <el-form-item label="交易对" prop="symbol">
-        <el-input v-model="form.symbol" placeholder="例如：BTC/USDT" />
+        <el-select
+          v-model="form.symbol"
+          filterable
+          placeholder="搜索或选择交易对"
+          :loading="symbolsLoading"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="s in symbolOptions"
+            :key="s"
+            :label="s"
+            :value="s"
+          />
+        </el-select>
+        <div v-if="form.account_id && form.symbol" style="margin-top: 8px; font-size: 12px; color: #606266;">
+          <span v-if="tradingFeeLoading">手续费加载中...</span>
+          <span v-else-if="tradingFee">
+            Maker: {{ formatFeeRate(tradingFee.maker) }}，Taker: {{ formatFeeRate(tradingFee.taker) }}
+          </span>
+        </div>
       </el-form-item>
       <el-divider content-position="left">交易参数</el-divider>
       <el-form-item label="基础订单量" prop="base_order_size">
