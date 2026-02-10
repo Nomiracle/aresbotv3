@@ -296,29 +296,32 @@ function formatSignedPercent(value: number, fractionDigits = 3): string {
   return `${sign}${value.toFixed(fractionDigits)}%`
 }
 
-const buySummary = computed(() => {
-  const orders = sortedBuyOrders.value
-  if (!orders.length) {
-    return '-'
-  }
-  const prices = orders.map(o => o.price)
-  const currentPrice = props.status?.current_price
-  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, true) : null
-  const avgText = avgStep === null ? '' : ` (均${formatSignedPercent(avgStep)})`
-  return `${formatPriceRange(prices)}${avgText}`
-})
+interface OrderSummary {
+  range: string
+  avgStep: number | null
+}
 
-const sellSummary = computed(() => {
-  const orders = sortedSellOrders.value
-  if (!orders.length) {
-    return '-'
-  }
+function buildOrderSummary(
+  orders: OrderDetail[],
+  currentPrice: number | null | undefined,
+  descending: boolean
+): OrderSummary {
   const prices = orders.map(o => o.price)
-  const currentPrice = props.status?.current_price
-  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, false) : null
-  const avgText = avgStep === null ? '' : ` (均${formatSignedPercent(avgStep)})`
-  return `${formatPriceRange(prices)}${avgText}`
-})
+  const range = formatPriceRange(prices)
+  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, descending) : null
+  return {
+    range,
+    avgStep,
+  }
+}
+
+const buySummary = computed(() =>
+  buildOrderSummary(sortedBuyOrders.value, props.status?.current_price, true)
+)
+
+const sellSummary = computed(() =>
+  buildOrderSummary(sortedSellOrders.value, props.status?.current_price, false)
+)
 
 onMounted(() => {
   tickClock()
@@ -430,12 +433,18 @@ onUnmounted(() => {
       <div class="order-line buy">
         <span class="order-label">买单({{ status?.pending_buys ?? 0 }}):</span>
         <span v-if="!sortedBuyOrders.length" class="order-empty">-</span>
-        <span v-else class="order-summary">{{ buySummary }}</span>
+        <span v-else class="order-summary">
+          {{ buySummary.range }}
+          <span v-if="buySummary.avgStep !== null" class="order-step">(均{{ formatSignedPercent(buySummary.avgStep) }})</span>
+        </span>
       </div>
       <div class="order-line sell">
         <span class="order-label">卖单({{ status?.pending_sells ?? 0 }}):</span>
         <span v-if="!sortedSellOrders.length" class="order-empty">-</span>
-        <span v-else class="order-summary">{{ sellSummary }}</span>
+        <span v-else class="order-summary">
+          {{ sellSummary.range }}
+          <span v-if="sellSummary.avgStep !== null" class="order-step">(均{{ formatSignedPercent(sellSummary.avgStep) }})</span>
+        </span>
       </div>
     </div>
 
@@ -663,6 +672,12 @@ onUnmounted(() => {
 
 .order-summary {
   color: #606266;
+  font-weight: 500;
+}
+
+.order-step {
+  margin-left: 6px;
+  color: #17a2b8;
   font-weight: 500;
 }
 
