@@ -349,6 +349,8 @@ MYSQL_ROOT_PASSWORD=root_password
 MYSQL_DATABASE=aresbot
 MYSQL_USER=aresbot
 MYSQL_PASSWORD=aresbot_password
+MYSQL_TZ=Asia/Shanghai              # 容器系统时区（北京时间）
+MYSQL_DEFAULT_TIME_ZONE=+08:00      # MySQL 默认会话时区
 
 # -------------------- Redis 配置 --------------------
 REDIS_PASSWORD=redis_password
@@ -452,6 +454,8 @@ MYSQL_ROOT_PASSWORD=your_root_password
 MYSQL_DATABASE=aresbot
 MYSQL_USER=aresbot
 MYSQL_PASSWORD=your_mysql_password
+MYSQL_TZ=Asia/Shanghai
+MYSQL_DEFAULT_TIME_ZONE=+08:00
 
 # Redis 配置
 REDIS_PASSWORD=your_redis_password
@@ -490,6 +494,8 @@ MASTER_REDIS_PORT=6379
 MYSQL_USER=aresbot
 MYSQL_PASSWORD=your_mysql_password
 MYSQL_DATABASE=aresbot
+MYSQL_TZ=Asia/Shanghai
+MYSQL_DEFAULT_TIME_ZONE=+08:00
 
 # Redis 凭证 (与主节点相同)
 REDIS_PASSWORD=your_redis_password
