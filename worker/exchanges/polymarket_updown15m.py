@@ -34,6 +34,7 @@ _CLOB_HOST = "https://clob.polymarket.com"
 _CHAIN_ID = 137
 _MARKET_PERIOD_SECONDS = 15 * 60
 _BALANCE_SCALE = 1_000_000
+_DEFAULT_MARKET_CLOSE_BUFFER = 180
 
 
 class PolymarketUpDown15m(BaseExchange):
@@ -50,7 +51,10 @@ class PolymarketUpDown15m(BaseExchange):
         super().__init__(api_key, api_secret, symbol, testnet)
 
         self._market_prefix, self._outcome = self._parse_symbol(symbol)
-        self._market_close_buffer = max(int(market_close_buffer or 0), 0)
+        if market_close_buffer is None:
+            self._market_close_buffer = _DEFAULT_MARKET_CLOSE_BUFFER
+        else:
+            self._market_close_buffer = max(int(market_close_buffer), 0)
 
         # 市场状态
         self._market_slug: Optional[str] = None

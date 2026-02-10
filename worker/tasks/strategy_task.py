@@ -441,7 +441,7 @@ def _create_engine(
             api_secret=api_secret,
             symbol=strategy_config["symbol"],
             testnet=account_data.get("testnet", False),
-            market_close_buffer=int(strategy_config.get("stop_loss_delay") or 0),
+            market_close_buffer=int(strategy_config.get("stop_loss_delay") or 180),
         )
         strategy_impl = PolymarketGridStrategy(trading_config)
     elif exchange_name in {"binance", "binance_spot"}:
