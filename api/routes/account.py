@@ -23,14 +23,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SYMBOLS_CACHE_TTL_SECONDS = 600
-EXCHANGES_CACHE_KEY = "exchanges:supported:v1"
+EXCHANGES_CACHE_KEY = "exchanges:supported:v2"
 EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
-DEFAULT_SUPPORTED_EXCHANGES = ("binance", "okx", "bybit")
+INTERNAL_SUPPORTED_EXCHANGES = ("binance_spot", "polymarket_updown15m")
+DEFAULT_SUPPORTED_EXCHANGES = ("binance", "okx", "bybit", *INTERNAL_SUPPORTED_EXCHANGES)
 
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",
+    "binance_spot": "Binance Spot",
     "binanceusdm": "Binance USDM",
     "binancecoinm": "Binance COIN-M",
+    "polymarket_updown15m": "Polymarket UpDown 15m",
 }
 
 
@@ -97,9 +100,11 @@ def _get_supported_exchange_ids() -> List[str]:
         configured = list(DEFAULT_SUPPORTED_EXCHANGES)
 
     available_exchanges = set(getattr(ccxt, "exchanges", []))
+    internal_exchanges = set(INTERNAL_SUPPORTED_EXCHANGES)
+    supported_exchanges = available_exchanges | internal_exchanges
     validated: List[str] = []
     for exchange_id in configured:
-        if exchange_id not in available_exchanges:
+        if exchange_id not in supported_exchanges:
             logger.warning("skip unsupported exchange id from config: %s", exchange_id)
             continue
         if exchange_id in validated:
@@ -109,7 +114,7 @@ def _get_supported_exchange_ids() -> List[str]:
     if validated:
         return validated
 
-    return [exchange_id for exchange_id in DEFAULT_SUPPORTED_EXCHANGES if exchange_id in available_exchanges]
+    return [exchange_id for exchange_id in DEFAULT_SUPPORTED_EXCHANGES if exchange_id in supported_exchanges]
 
 
 def _build_exchange_options() -> List[ExchangeOptionResponse]:
