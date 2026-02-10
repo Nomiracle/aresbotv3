@@ -1,7 +1,8 @@
-from typing import Optional
+from typing import Mapping, Optional
 import logging
 
 from worker.core.base_strategy import BaseStrategy, Signal, StrategyConfig, TradeDecision
+from worker.domain.order import Order
 
 
 class GridStrategy(BaseStrategy):
@@ -17,10 +18,12 @@ class GridStrategy(BaseStrategy):
     def should_buy(
         self,
         current_price: float,
-        active_buy_orders: int,
-        active_sell_orders: int,
+        pending_buy_orders: Mapping[str, Order],
+        pending_sell_orders: Mapping[str, Order],
     ) -> Optional[TradeDecision]:
         """判断是否需要下买单"""
+        active_buy_orders = len(pending_buy_orders)
+        active_sell_orders = len(pending_sell_orders)
         total_orders = active_buy_orders + active_sell_orders
 
         if total_orders >= self.config.order_grid:
@@ -32,7 +35,23 @@ class GridStrategy(BaseStrategy):
             )
             return None
 
-        grid_index = total_orders + 1
+        used_indices = {
+            order.grid_index
+            for order in pending_buy_orders.values()
+            if order.grid_index > 0
+        }
+        grid_index = 1
+        while grid_index in used_indices and grid_index <= self.config.order_grid:
+            grid_index += 1
+
+        if grid_index > self.config.order_grid:
+            self.logger.debug(
+                "skip buy no free grid slot used=%s grid=%s",
+                sorted(used_indices),
+                self.config.order_grid,
+            )
+            return None
+
         offset = grid_index * self.config.offset_percent / 100.0
         buy_price = current_price * (1 - offset)
 

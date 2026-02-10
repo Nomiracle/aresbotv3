@@ -281,6 +281,8 @@ class TradingEngine:
         with self._lock:
             active_buys = len(self._pending_buys)
             active_sells = len(self._pending_sells)
+            pending_buys = dict(self._pending_buys)
+            pending_sells = dict(self._pending_sells)
 
         can_open, reason = self.risk_manager.can_open_position(
             self.position_tracker.get_position_count()
@@ -291,8 +293,8 @@ class TradingEngine:
 
         decision = self.strategy.should_buy(
             current_price=self._current_price,
-            active_buy_orders=active_buys,
-            active_sell_orders=active_sells,
+            pending_buy_orders=pending_buys,
+            pending_sell_orders=pending_sells,
         )
 
         if decision:

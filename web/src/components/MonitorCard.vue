@@ -63,12 +63,31 @@ const workerDisplay = computed(() => {
   return ''
 })
 
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0
+  }
+  if (typeof value === 'string') {
+    const normalized = value.replace(/,/g, '')
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function normalizeOrders(orders: OrderDetail[]): OrderDetail[] {
+  return orders.map((order) => ({
+    price: toNumber((order as unknown as { price?: unknown }).price),
+    quantity: toNumber((order as unknown as { quantity?: unknown }).quantity),
+  }))
+}
+
 // 排序后的买单（降序）和卖单（升序）
 const sortedBuyOrders = computed(() =>
-  [...(props.status?.buy_orders ?? [])].sort((a, b) => b.price - a.price)
+  normalizeOrders(props.status?.buy_orders ?? []).sort((a, b) => b.price - a.price)
 )
 const sortedSellOrders = computed(() =>
-  [...(props.status?.sell_orders ?? [])].sort((a, b) => a.price - b.price)
+  normalizeOrders(props.status?.sell_orders ?? []).sort((a, b) => a.price - b.price)
 )
 
 // 挂单总价值

@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from worker.domain.order import Order
 
 
 class Signal(Enum):
@@ -45,8 +48,8 @@ class BaseStrategy(ABC):
     def should_buy(
         self,
         current_price: float,
-        active_buy_orders: int,
-        active_sell_orders: int,
+        pending_buy_orders: Mapping[str, "Order"],
+        pending_sell_orders: Mapping[str, "Order"],
     ) -> Optional[TradeDecision]:
         """判断是否需要下买单"""
         pass
@@ -71,4 +74,3 @@ class BaseStrategy(ABC):
     ) -> Optional[float]:
         """判断是否需要改价，返回新价格或None"""
         pass
-
