@@ -5,7 +5,7 @@ from typing import Optional, Sequence
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from .models import ExchangeAccount, Strategy, Trade
 
@@ -261,7 +261,7 @@ class TradeCRUD:
             select(Trade)
             .join(Strategy)
             .options(
-                selectinload(Trade.strategy).selectinload(Strategy.account)
+                joinedload(Trade.strategy).joinedload(Strategy.account)
             )
             .where(Strategy.user_email == user_email)
             .order_by(Trade.created_at.desc())
@@ -271,7 +271,7 @@ class TradeCRUD:
         if strategy_id is not None:
             query = query.where(Trade.strategy_id == strategy_id)
         result = await session.execute(query)
-        return result.scalars().all()
+        return result.unique().scalars().all()
 
     @staticmethod
     async def count_by_user(
@@ -281,7 +281,8 @@ class TradeCRUD:
     ) -> int:
         """Count trades for a user."""
         query = (
-            select(func.count(Trade.id))
+            select(func.count())
+            .select_from(Trade)
             .join(Strategy)
             .where(Strategy.user_email == user_email)
         )

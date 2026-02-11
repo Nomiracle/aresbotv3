@@ -32,6 +32,9 @@ async function fetchTrades() {
     const result = await tradeApi.getAll(params)
     trades.value = result.items
     total.value = result.total
+  } catch {
+    trades.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
