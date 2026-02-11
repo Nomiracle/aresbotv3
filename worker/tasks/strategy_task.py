@@ -23,6 +23,7 @@ from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
 from worker.exchanges.binance_spot import BinanceSpot
 from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
+from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
 from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
 
@@ -453,7 +454,14 @@ def _create_engine(
         )
         strategy_impl = GridStrategy(trading_config)
     else:
-        raise ValueError(f"unsupported exchange for strategy task: {exchange_name}")
+        exchange = ExchangeSpot(
+            api_key=api_key,
+            api_secret=api_secret,
+            symbol=strategy_config["symbol"],
+            exchange_id=exchange_name,
+            testnet=account_data.get("testnet", False),
+        )
+        strategy_impl = GridStrategy(trading_config)
 
     risk_manager = RiskManager(risk_config)
     state_store = TradeStore(strategy_id)

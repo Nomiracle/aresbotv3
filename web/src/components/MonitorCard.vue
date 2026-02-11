@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { InfoFilled, WarningFilled } from '@element-plus/icons-vue'
+import { getExchangeOptionsFromCache } from '@/api/account'
 import type { StrategyStatus, OrderDetail } from '@/types'
 
 interface MonitorCardStrategy {
@@ -103,13 +104,9 @@ const exchangeLabel = computed(() => {
     return ''
   }
 
-  const labels: Record<string, string> = {
-    binance: 'Binance Spot',
-    binance_spot: 'Binance Spot',
-    polymarket_updown15m: 'Polymarket 15m',
-  }
-
-  return labels[exchange] ?? exchange
+  const options = getExchangeOptionsFromCache()
+  const match = options.find(o => o.value === exchange)
+  return match?.label ?? exchange
 })
 
 function toFiniteNumber(value: unknown): number | null {
