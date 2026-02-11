@@ -129,6 +129,7 @@ export interface Trade {
   strategy_id: number
   order_id: string
   symbol: string
+  exchange: string
   side: 'BUY' | 'SELL'
   price: string
   quantity: string

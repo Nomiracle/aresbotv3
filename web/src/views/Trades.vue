@@ -3,6 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import type { Trade, Strategy } from '@/types'
 import { tradeApi } from '@/api/trade'
 import { strategyApi } from '@/api/strategy'
+import { getExchangeOptionsFromCache } from '@/api/account'
+import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 
 const trades = ref<Trade[]>([])
 const strategies = ref<Strategy[]>([])
@@ -11,6 +13,7 @@ const total = ref(0)
 const pageSize = ref(20)
 const currentPage = ref(1)
 const selectedStrategy = ref<number | ''>('')
+const expandedRows = ref<number[]>([])
 
 async function fetchStrategies() {
   strategies.value = await strategyApi.getAll()
@@ -26,11 +29,9 @@ async function fetchTrades() {
     if (selectedStrategy.value !== '') {
       params.strategy_id = selectedStrategy.value
     }
-    trades.value = await tradeApi.getAll(params)
-    // 假设后端返回的是全部数据，这里简单处理
-    total.value = trades.value.length < pageSize.value ? 
-      (currentPage.value - 1) * pageSize.value + trades.value.length : 
-      currentPage.value * pageSize.value + 1
+    const result = await tradeApi.getAll(params)
+    trades.value = result.items
+    total.value = result.total
   } finally {
     loading.value = false
   }
@@ -38,6 +39,12 @@ async function fetchTrades() {
 
 function handlePageChange(page: number) {
   currentPage.value = page
+  fetchTrades()
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
   fetchTrades()
 }
 
@@ -53,6 +60,23 @@ function formatTime(dateStr: string) {
 function getStrategyName(id: number) {
   const strategy = strategies.value.find(s => s.id === id)
   return strategy?.name || '-'
+}
+
+function getExchangeLabel(exchangeId: string): string {
+  const options = getExchangeOptionsFromCache()
+  const match = options.find(o => o.value === exchangeId)
+  return match?.label ?? exchangeId
+}
+
+function getRelatedBuyTrade(sellTrade: Trade): Trade | null {
+  if (!sellTrade.related_order_id) return null
+  return trades.value.find(t =>
+    t.order_id === sellTrade.related_order_id && t.side === 'BUY'
+  ) || null
+}
+
+function handleExpandChange(row: Trade, expandedRowsList: Trade[]) {
+  expandedRows.value = expandedRowsList.map(r => r.id)
 }
 
 watch(selectedStrategy, () => {
@@ -87,30 +111,80 @@ onMounted(() => {
     </div>
 
     <el-card>
-      <el-table :data="trades" v-loading="loading" stripe>
-        <el-table-column prop="created_at" label="时间" width="180">
+      <el-table
+        :data="trades"
+        v-loading="loading"
+        stripe
+        row-key="id"
+        :expand-row-keys="expandedRows.map(String)"
+        @expand-change="handleExpandChange"
+      >
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div v-if="row.side === 'SELL' || row.side === 'sell'" class="expand-content">
+              <template v-if="getRelatedBuyTrade(row)">
+                <p class="expand-title">关联买入订单</p>
+                <el-descriptions :column="4" border size="small">
+                  <el-descriptions-item label="时间">{{ formatTime(getRelatedBuyTrade(row)!.created_at) }}</el-descriptions-item>
+                  <el-descriptions-item label="价格">{{ getRelatedBuyTrade(row)!.price }}</el-descriptions-item>
+                  <el-descriptions-item label="数量">{{ getRelatedBuyTrade(row)!.quantity }}</el-descriptions-item>
+                  <el-descriptions-item label="金额">{{ getRelatedBuyTrade(row)!.amount }}</el-descriptions-item>
+                  <el-descriptions-item label="订单ID">
+                    <span class="order-id-text">{{ getRelatedBuyTrade(row)!.order_id }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="手续费">{{ getRelatedBuyTrade(row)!.fee }}</el-descriptions-item>
+                </el-descriptions>
+              </template>
+              <template v-else-if="row.related_order_id">
+                <p class="expand-title">关联买入订单: <span class="order-id-text">{{ row.related_order_id }}</span>（不在当前页）</p>
+              </template>
+              <template v-else>
+                <p class="expand-empty">无关联买入订单</p>
+              </template>
+            </div>
+            <div v-else class="expand-content">
+              <p class="expand-empty">买入订单无展开详情</p>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="created_at" label="时间" min-width="160">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column prop="strategy_id" label="策略" width="150">
+        <el-table-column prop="strategy_id" label="策略" min-width="120">
           <template #default="{ row }">
             {{ getStrategyName(row.strategy_id) }}
           </template>
         </el-table-column>
-        <el-table-column prop="symbol" label="交易对" width="120" />
-        <el-table-column prop="side" label="方向" width="80">
+        <el-table-column prop="order_id" label="订单ID" min-width="140">
+          <template #default="{ row }">
+            <span class="order-id-text">{{ row.order_id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="exchange" label="交易所" min-width="100">
+          <template #default="{ row }">
+            <span
+              v-if="row.exchange"
+              class="exchange-badge"
+              :style="{ color: exchangeColor(row.exchange), backgroundColor: exchangeBgColor(row.exchange) }"
+            >{{ getExchangeLabel(row.exchange) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="symbol" label="交易对" min-width="100" />
+        <el-table-column prop="side" label="方向" min-width="70">
           <template #default="{ row }">
             <el-tag :type="row.side === 'BUY' ? 'success' : 'danger'" size="small">
               {{ row.side === 'BUY' ? '买入' : '卖出' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价格" width="120" />
-        <el-table-column prop="quantity" label="数量" width="120" />
-        <el-table-column prop="amount" label="金额" width="120" />
-        <el-table-column prop="fee" label="手续费" width="100" />
-        <el-table-column prop="pnl" label="盈亏" width="100">
+        <el-table-column prop="price" label="价格" min-width="100" />
+        <el-table-column prop="quantity" label="数量" min-width="100" />
+        <el-table-column prop="amount" label="金额" min-width="100" />
+        <el-table-column prop="fee" label="手续费" min-width="90" />
+        <el-table-column prop="pnl" label="盈亏" min-width="90">
           <template #default="{ row }">
             <span v-if="row.pnl" :style="{ color: parseFloat(row.pnl) >= 0 ? '#67c23a' : '#f56c6c' }">
               {{ parseFloat(row.pnl) >= 0 ? '+' : '' }}{{ row.pnl }}
@@ -118,21 +192,52 @@ onMounted(() => {
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_id" label="订单ID" min-width="150">
-          <template #default="{ row }">
-            <span style="font-size: 12px; color: #909399;">{{ row.order_id }}</span>
-          </template>
-        </el-table-column>
       </el-table>
 
       <el-pagination
         v-model:current-page="currentPage"
-        :page-size="pageSize"
+        v-model:page-size="pageSize"
         :total="total"
-        layout="prev, pager, next"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
         style="margin-top: 20px; justify-content: center;"
         @current-change="handlePageChange"
+        @size-change="handleSizeChange"
       />
     </el-card>
   </div>
 </template>
+
+<style scoped>
+.exchange-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.order-id-text {
+  font-size: 12px;
+  color: #909399;
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.expand-content {
+  padding: 8px 16px;
+}
+
+.expand-title {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.expand-empty {
+  font-size: 13px;
+  color: #909399;
+}
+</style>

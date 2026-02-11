@@ -260,6 +260,9 @@ class TradeCRUD:
         query = (
             select(Trade)
             .join(Strategy)
+            .options(
+                selectinload(Trade.strategy).selectinload(Strategy.account)
+            )
             .where(Strategy.user_email == user_email)
             .order_by(Trade.created_at.desc())
             .limit(limit)
@@ -269,6 +272,23 @@ class TradeCRUD:
             query = query.where(Trade.strategy_id == strategy_id)
         result = await session.execute(query)
         return result.scalars().all()
+
+    @staticmethod
+    async def count_by_user(
+        session: AsyncSession,
+        user_email: str,
+        strategy_id: Optional[int] = None,
+    ) -> int:
+        """Count trades for a user."""
+        query = (
+            select(func.count(Trade.id))
+            .join(Strategy)
+            .where(Strategy.user_email == user_email)
+        )
+        if strategy_id is not None:
+            query = query.where(Trade.strategy_id == strategy_id)
+        result = await session.execute(query)
+        return result.scalar() or 0
 
     @staticmethod
     async def get_stats(

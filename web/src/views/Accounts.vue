@@ -2,7 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Account, AccountCreate } from '@/types'
-import { accountApi, preloadExchangeOptionsCache } from '@/api/account'
+import { accountApi, preloadExchangeOptionsCache, getExchangeOptionsFromCache } from '@/api/account'
+import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 import AccountForm from '@/components/AccountForm.vue'
 
 const accounts = ref<Account[]>([])
@@ -25,6 +26,12 @@ function handleAdd() {
     // 使用缓存/兜底值继续打开弹窗
   })
   dialogVisible.value = true
+}
+
+function getExchangeLabel(exchangeId: string): string {
+  const options = getExchangeOptionsFromCache()
+  const match = options.find(o => o.value === exchangeId)
+  return match?.label ?? exchangeId
 }
 
 function handleEdit(account: Account) {
@@ -87,7 +94,10 @@ onMounted(() => {
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="exchange" label="交易所" width="120">
           <template #default="{ row }">
-            <el-tag>{{ row.exchange.toUpperCase() }}</el-tag>
+            <span
+              class="exchange-badge"
+              :style="{ color: exchangeColor(row.exchange), backgroundColor: exchangeBgColor(row.exchange) }"
+            >{{ getExchangeLabel(row.exchange) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="label" label="账户标签" />
@@ -126,3 +136,15 @@ onMounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.exchange-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+</style>

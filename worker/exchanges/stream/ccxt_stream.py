@@ -126,6 +126,12 @@ class CcxtStreamManager(StreamManager):
         self._reconcile_call_count = 0
         self._last_reconcile_time = 0.0
 
+        # 统计计数器
+        self._stats_ticker_msgs = 0
+        self._stats_price_updates = 0
+        self._stats_order_msgs = 0
+        self._stats_started_at = time.time()
+
         # 错误日志限流
         self._error_log_cache: Dict[str, float] = {}
 
@@ -343,6 +349,7 @@ class CcxtStreamManager(StreamManager):
         tasks = [
             asyncio.create_task(self._watch_ticker()),
             asyncio.create_task(self._watch_orders()),
+            asyncio.create_task(self._log_stats_loop()),
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in results:
@@ -368,6 +375,7 @@ class CcxtStreamManager(StreamManager):
                     continue
 
                 bids_asks = await self._exchange.watch_bids_asks(symbols)
+                self._stats_ticker_msgs += 1
 
                 if not isinstance(bids_asks, dict):
                     continue
@@ -390,6 +398,7 @@ class CcxtStreamManager(StreamManager):
                         continue
 
                     last_prices[symbol] = price
+                    self._stats_price_updates += 1
                     with self._lock:
                         self._prices[symbol] = (price, time.time())
 
@@ -424,6 +433,7 @@ class CcxtStreamManager(StreamManager):
                 for raw_order in raw_orders:
                     if not isinstance(raw_order, dict):
                         continue
+                    self._stats_order_msgs += 1
 
                     order_symbol = str(raw_order.get("symbol", ""))
                     if order_symbol.upper() not in subscribed:
@@ -464,6 +474,56 @@ class CcxtStreamManager(StreamManager):
                         err,
                     )
                 await asyncio.sleep(1)
+
+    # ==================== 统计日志 ====================
+
+    async def _log_stats_loop(self) -> None:
+        """每 10 秒输出一次缓存统计"""
+        while self._running:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                break
+
+            with self._lock:
+                total_orders = len(self._orders)
+                active_orders = 0
+                filled_orders = 0
+                partial_orders = 0
+                cancelled_orders = 0
+                for o in self._orders.values():
+                    if o.status == OrderStatus.FILLED:
+                        filled_orders += 1
+                    elif o.status == OrderStatus.PARTIALLY_FILLED:
+                        partial_orders += 1
+                    elif o.status == OrderStatus.CANCELLED:
+                        cancelled_orders += 1
+                    elif o.status == OrderStatus.PLACED:
+                        active_orders += 1
+                terminal_orders = filled_orders + cancelled_orders
+                price_count = len(self._prices)
+                symbols_count = len(self._subscribed_symbols)
+
+            elapsed = max(time.time() - self._stats_started_at, 1e-9)
+            logger.info(
+                "[%s] stream_stats symbols=%d prices=%d "
+                "orders_cache=%d active=%d filled=%d partial=%d terminal=%d "
+                "ticker_msgs=%d(%.1f/s) price_updates=%d(%.1f/s) order_msgs=%d(%.1f/s)",
+                self._exchange_id,
+                symbols_count,
+                price_count,
+                total_orders,
+                active_orders,
+                filled_orders,
+                partial_orders,
+                terminal_orders,
+                self._stats_ticker_msgs,
+                self._stats_ticker_msgs / elapsed,
+                self._stats_price_updates,
+                self._stats_price_updates / elapsed,
+                self._stats_order_msgs,
+                self._stats_order_msgs / elapsed,
+            )
 
     # ==================== 工具方法 ====================
 

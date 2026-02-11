@@ -1,12 +1,12 @@
 import api from './index'
-import type { Trade, TradeStats } from '@/types'
+import type { Trade, TradeStats, PaginatedResponse } from '@/types'
 
 export const tradeApi = {
   getAll(params?: {
     strategy_id?: number
     limit?: number
     offset?: number
-  }): Promise<Trade[]> {
+  }): Promise<PaginatedResponse<Trade>> {
     return api.get('/trades', { params })
   },
 

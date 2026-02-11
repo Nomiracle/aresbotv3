@@ -1,4 +1,5 @@
 """Strategy management routes."""
+import asyncio
 from decimal import Decimal
 from typing import Any, List, Optional
 
@@ -204,6 +205,35 @@ def _ensure_worker_capacity(worker_name: Optional[str]) -> None:
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"指定 Worker 不在线: {worker_name}",
     )
+
+
+def _validate_worker(worker_name: Optional[str]) -> None:
+    """Validate worker availability and capacity in a single get_active_workers call."""
+    if not worker_name:
+        return
+
+    workers = get_active_workers()
+    worker_names = {w["name"] for w in workers}
+
+    if worker_name not in worker_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"指定 Worker 不在线: {worker_name}",
+        )
+
+    for w in workers:
+        if w["name"] == worker_name:
+            concurrency = int(w.get("concurrency") or 0)
+            active = int(w.get("active_tasks") or 0)
+            if concurrency > 0 and active >= concurrency:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Worker {worker_name} 已满载（{active}/{concurrency}），"
+                        f"请先停止该节点上的某个策略，或将此策略分配到其他 Worker 节点"
+                    ),
+                )
+            return
 
 
 def _ensure_no_duplicate_symbol(
@@ -428,8 +458,7 @@ async def start_strategy(
 
     # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
-    _ensure_worker_available(worker_name)
-    _ensure_worker_capacity(worker_name)
+    await asyncio.to_thread(_validate_worker, worker_name)
 
     strategy_runtime = {
         "user_email": user_email,
@@ -452,7 +481,8 @@ async def start_strategy(
         "runtime_config": strategy_config,
     }
 
-    task_id = send_run_strategy(
+    task_id = await asyncio.to_thread(
+        send_run_strategy,
         strategy_id=strategy_id,
         account_data=account_data,
         strategy_config=strategy_config,
@@ -587,8 +617,7 @@ async def batch_start_strategies(
                 "max_open_positions": strategy.max_open_positions,
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             }
-            _ensure_worker_available(strategy.worker_name)
-            _ensure_worker_capacity(strategy.worker_name)
+            await asyncio.to_thread(_validate_worker, strategy.worker_name)
             strategy_runtime = {
                 "user_email": user_email,
                 "strategy_snapshot": {
@@ -609,7 +638,8 @@ async def batch_start_strategies(
                 },
                 "runtime_config": strategy_config,
             }
-            send_run_strategy(
+            await asyncio.to_thread(
+                send_run_strategy,
                 sid,
                 account_data,
                 strategy_config,
