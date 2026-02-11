@@ -78,7 +78,7 @@ function getRelatedBuyTrade(sellTrade: Trade): Trade | null {
   ) || null
 }
 
-function handleExpandChange(row: Trade, expandedRowsList: Trade[]) {
+function handleExpandChange(_row: Trade, expandedRowsList: Trade[]) {
   expandedRows.value = expandedRowsList.map(r => r.id)
 }
 
