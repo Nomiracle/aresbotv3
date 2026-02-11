@@ -219,12 +219,18 @@ const monitorCardStrategy = computed(() => {
     id: item.strategy_id,
     name: item.strategy_name,
     symbol: item.symbol,
+    exchange: item.exchange ?? '',
+    base_order_size: item.base_order_size,
     max_open_positions: item.max_open_positions,
     grid_levels: item.grid_levels,
     buy_price_deviation: item.buy_price_deviation,
     sell_price_deviation: item.sell_price_deviation,
     polling_interval: item.polling_interval,
     price_tolerance: item.price_tolerance,
+    stop_loss: item.stop_loss,
+    stop_loss_delay: item.stop_loss_delay,
+    max_daily_drawdown: item.max_daily_drawdown,
+    worker_name: item.worker_name,
   }))
 })
 

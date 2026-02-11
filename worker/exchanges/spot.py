@@ -378,9 +378,11 @@ class ExchangeSpot(BaseExchange):
 
     # ==================== 元数据接口 ====================
 
-    @classmethod
-    def get_exchange_info(cls) -> Dict[str, str]:
-        return {"id": "exchange_spot", "name": "Exchange Spot", "type": "spot"}
+    def get_exchange_info(self) -> Dict[str, str]:
+        return {"id": self.exchange_id, "name": self.exchange_id, "type": "spot"}
+
+    def get_status_extra(self) -> Dict[str, Any]:
+        return {"ws_enabled": self._stream is not None}
 
     def get_trading_rules(self) -> TradingRules:
         if self._trading_rules is not None:

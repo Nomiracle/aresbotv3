@@ -53,6 +53,7 @@ class StrategyResponse(BaseModel):
     account_id: int
     name: str
     symbol: str
+    exchange: str
     base_order_size: Decimal
     buy_price_deviation: Decimal
     sell_price_deviation: Decimal
@@ -130,11 +131,15 @@ class RunningStrategyResponse(BaseModel):
 
 
 def strategy_to_response(strategy: Strategy) -> StrategyResponse:
+    exchange = ""
+    if strategy.account is not None:
+        exchange = strategy.account.exchange
     return StrategyResponse(
         id=strategy.id,
         account_id=strategy.account_id,
         name=strategy.name,
         symbol=strategy.symbol,
+        exchange=exchange,
         base_order_size=strategy.base_order_size,
         buy_price_deviation=strategy.buy_price_deviation,
         sell_price_deviation=strategy.sell_price_deviation,

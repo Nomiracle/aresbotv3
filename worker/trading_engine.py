@@ -105,7 +105,8 @@ class TradingEngine:
                     if isinstance(price, (int, float)) and price > 0:
                         self._current_price = price
                 except Exception as e:
-                    self.log.warning("获取价格失败: %s", e)
+                    self.log.warning("获取价格失败: %s", e, exc_info=True)
+                    self._last_error = f"获取价格失败: {e}"
 
                 if self._current_price is None or self._current_price <= 0:
                     self.log.debug("主循环等待价格 #%s", loop_index)
@@ -274,7 +275,8 @@ class TradingEngine:
                         self._save_trade(order, ex_order.price, quantity=new_filled)
 
         except Exception as e:
-            self.log.warning("同步订单失败: %s", e)
+            self.log.warning("同步订单失败: %s", e, exc_info=True)
+            self._last_error = f"同步订单失败: {e}"
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单"""

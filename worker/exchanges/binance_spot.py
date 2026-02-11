@@ -855,6 +855,9 @@ class BinanceSpot(BaseExchange):
     def get_exchange_info(cls) -> Dict[str, str]:
         return {"id": "binance_spot", "name": "Binance Spot", "type": "spot"}
 
+    def get_status_extra(self) -> Dict[str, Any]:
+        return {"ws_enabled": True}
+
     @staticmethod
     def _build_rules_from_precision(
         precision_value: object,

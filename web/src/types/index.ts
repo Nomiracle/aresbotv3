@@ -21,6 +21,7 @@ export interface Strategy {
   account_id: number
   name: string
   symbol: string
+  exchange: string
   base_order_size: string
   buy_price_deviation: string
   sell_price_deviation: string

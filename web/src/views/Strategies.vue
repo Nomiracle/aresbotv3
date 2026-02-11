@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
+import { getExchangeOptionsFromCache } from '@/api/account'
+import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 import StrategyForm from '@/components/StrategyForm.vue'
 import EditableCell from '@/components/EditableCell.vue'
 import type { SelectOption } from '@/components/EditableCell.vue'
@@ -63,6 +65,12 @@ const workerOptions = computed<SelectOption[]>(() =>
 
 function isRunning(id: number): boolean {
   return statusMap.value.get(id)?.is_running ?? false
+}
+
+function getExchangeLabel(exchangeId: string): string {
+  const options = getExchangeOptionsFromCache()
+  const match = options.find(o => o.value === exchangeId)
+  return match?.label ?? exchangeId
 }
 
 function isEditing(rowId: number, field: string): boolean {
@@ -306,6 +314,16 @@ onMounted(() => {
           </template>
         </el-table-column>
 
+        <el-table-column label="交易所" min-width="100">
+          <template #default="{ row }">
+            <span
+              v-if="row.exchange"
+              class="exchange-badge"
+              :style="{ color: exchangeColor(row.exchange), backgroundColor: exchangeBgColor(row.exchange) }"
+            >{{ getExchangeLabel(row.exchange) }}</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="交易对" min-width="100">
           <template #default="{ row }">
             <EditableCell
@@ -487,6 +505,16 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.exchange-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 :deep(.row-running) {
   background-color: #f0f9eb !important;
 }

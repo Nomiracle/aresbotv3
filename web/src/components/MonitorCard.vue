@@ -2,18 +2,25 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { InfoFilled, WarningFilled } from '@element-plus/icons-vue'
 import { getExchangeOptionsFromCache } from '@/api/account'
+import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 import type { StrategyStatus, OrderDetail } from '@/types'
 
 interface MonitorCardStrategy {
   id: number
   name: string
   symbol: string
+  exchange: string
+  base_order_size: string
   max_open_positions: number
   grid_levels: number
   buy_price_deviation: string
   sell_price_deviation: string
   polling_interval: string
   price_tolerance: string
+  stop_loss?: string | null
+  stop_loss_delay?: number | null
+  max_daily_drawdown?: string | null
+  worker_name?: string | null
 }
 
 const props = defineProps<{
@@ -27,9 +34,13 @@ const emit = defineEmits<{
   (e: 'start', id: number): void
 }>()
 
+const detailVisible = ref(false)
+
 const isRunning = computed(() => props.status?.is_running ?? false)
 
 const isPolymarket15m = computed(() => props.status?.exchange === 'polymarket_updown15m')
+
+const wsEnabled = computed(() => props.status?.extra_status?.ws_enabled === true)
 
 const clockSeconds = ref(Math.floor(Date.now() / 1000))
 
@@ -339,9 +350,11 @@ onUnmounted(() => {
         <span class="index">#{{ index }}</span>
         <span class="title-text">{{ strategy.name }}</span>
         <el-tag size="small" class="symbol-tag">{{ strategy.symbol }}</el-tag>
-        <el-tag v-if="exchangeLabel" size="small" type="info" effect="plain" class="exchange-tag">
-          {{ exchangeLabel }}
-        </el-tag>
+        <span
+          v-if="exchangeLabel && status?.exchange"
+          class="exchange-badge"
+          :style="{ color: exchangeColor(status.exchange), backgroundColor: exchangeBgColor(status.exchange) }"
+        >{{ exchangeLabel }}</span>
       </div>
       <div class="status">
         <span :class="['status-dot', isRunning ? 'running' : 'stopped']"></span>
@@ -364,6 +377,7 @@ onUnmounted(() => {
         >
           启动
         </el-button>
+        <el-button size="small" class="action-btn" @click="detailVisible = true">详情</el-button>
       </div>
     </div>
 
@@ -376,6 +390,10 @@ onUnmounted(() => {
         <span class="separator">|</span>
         <span class="worker-info">{{ workerDisplay }}</span>
       </template>
+      <span class="separator">|</span>
+      <span :class="['ws-tag', wsEnabled ? 'ws-on' : 'ws-off']">
+        {{ wsEnabled ? 'WS' : 'REST' }}
+      </span>
     </div>
 
     <div v-if="isRunning && polymarketStatus" class="exchange-row">
@@ -475,6 +493,30 @@ onUnmounted(() => {
       <span class="separator">|</span>
       <span>容差:{{ strategy.price_tolerance }}%</span>
     </div>
+
+    <!-- 策略详情弹窗 -->
+    <el-dialog v-model="detailVisible" :title="`策略详情 - ${strategy.name}`" width="420px">
+      <el-descriptions :column="2" border size="small">
+        <el-descriptions-item label="策略ID">{{ strategy.id }}</el-descriptions-item>
+        <el-descriptions-item label="策略名称">{{ strategy.name }}</el-descriptions-item>
+        <el-descriptions-item label="交易所">{{ exchangeLabel || strategy.exchange }}</el-descriptions-item>
+        <el-descriptions-item label="交易对">{{ strategy.symbol }}</el-descriptions-item>
+        <el-descriptions-item label="基础订单量">{{ strategy.base_order_size }}</el-descriptions-item>
+        <el-descriptions-item label="网格层数">{{ strategy.grid_levels }}</el-descriptions-item>
+        <el-descriptions-item label="买入偏差">{{ strategy.buy_price_deviation }}%</el-descriptions-item>
+        <el-descriptions-item label="卖出偏差">{{ strategy.sell_price_deviation }}%</el-descriptions-item>
+        <el-descriptions-item label="轮询间隔">{{ strategy.polling_interval }}s</el-descriptions-item>
+        <el-descriptions-item label="价格容差">{{ strategy.price_tolerance }}%</el-descriptions-item>
+        <el-descriptions-item label="最大持仓">{{ strategy.max_open_positions }}</el-descriptions-item>
+        <el-descriptions-item label="止损">{{ strategy.stop_loss ? strategy.stop_loss + '%' : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="止损延迟">{{ strategy.stop_loss_delay != null ? strategy.stop_loss_delay + 's' : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="日最大回撤">{{ strategy.max_daily_drawdown ? strategy.max_daily_drawdown + '%' : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="Worker">{{ strategy.worker_name || '自动分配' }}</el-descriptions-item>
+        <el-descriptions-item label="数据源">
+          <span :class="['ws-tag', wsEnabled ? 'ws-on' : 'ws-off']">{{ wsEnabled ? 'WebSocket' : 'REST' }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
   </div>
 </template>
 
@@ -517,7 +559,14 @@ onUnmounted(() => {
   margin-left: 4px;
 }
 
-.exchange-tag {
+.exchange-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
   margin-left: 2px;
 }
 
@@ -600,6 +649,25 @@ onUnmounted(() => {
 .worker-info {
   color: #606266;
   font-weight: 500;
+}
+
+.ws-tag {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ws-tag.ws-on {
+  color: #67c23a;
+  background: #f0f9eb;
+}
+
+.ws-tag.ws-off {
+  color: #909399;
+  background: #f4f4f5;
 }
 
 .separator {

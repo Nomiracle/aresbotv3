@@ -5,6 +5,7 @@ from typing import Optional, Sequence
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .models import ExchangeAccount, Strategy, Trade
 
@@ -132,7 +133,9 @@ class StrategyCRUD:
     ) -> Optional[Strategy]:
         """Get strategy by ID for a specific user."""
         result = await session.execute(
-            select(Strategy).where(
+            select(Strategy)
+            .options(selectinload(Strategy.account))
+            .where(
                 Strategy.id == strategy_id,
                 Strategy.user_email == user_email,
             )
@@ -156,6 +159,7 @@ class StrategyCRUD:
         """Get all strategies for a user."""
         result = await session.execute(
             select(Strategy)
+            .options(selectinload(Strategy.account))
             .where(Strategy.user_email == user_email)
             .order_by(Strategy.created_at.desc())
         )
