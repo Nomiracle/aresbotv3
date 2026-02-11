@@ -1,6 +1,7 @@
 """币安现货交易所实现 - 使用CCXT Pro"""
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import threading
@@ -53,10 +54,11 @@ class _SharedWsContext:
     running: bool = True
     tasks: List[asyncio.Task[Any]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    loop_ready: threading.Event = field(default_factory=threading.Event)
     # last_price per symbol
     last_prices: Dict[str, float] = field(default_factory=dict)
     # subscribed symbols
-    subscribed_symbols: set = field(default_factory=set)
+    subscribed_symbols: set[str] = field(default_factory=set)
     error_log_cache: Dict[str, float] = field(default_factory=dict)
     error_log_interval: float = 2.0
 
@@ -192,6 +194,18 @@ class BinanceSpot(BaseExchange):
         return exchange
 
     @classmethod
+    def _wait_for_loop_ready(cls, context: _SharedWsContext) -> None:
+        wait_timeout = max(min(context.sync_timeout, 5.0), 0.5)
+        if context.loop_ready.wait(timeout=wait_timeout):
+            return
+
+        logger.warning(
+            "%s shared ws loop init timeout after %.1fs",
+            context.log_prefix,
+            wait_timeout,
+        )
+
+    @classmethod
     def _acquire_shared_context(
         cls,
         key: SharedKey,
@@ -201,40 +215,59 @@ class BinanceSpot(BaseExchange):
         sync_timeout: float,
         log_prefix: str,
     ) -> _SharedWsContext:
+        context_to_wait: Optional[_SharedWsContext] = None
+
         with cls._shared_lock:
             context = cls._shared_contexts.get(key)
             if context is not None:
-                # Increment reference count
-                context.ref_count += 1
-                logger.debug("%s reusing shared context, ref_count=%d", log_prefix, context.ref_count)
-                return context
+                thread_alive = bool(context.thread and context.thread.is_alive())
+                if context.running and thread_alive:
+                    context.ref_count += 1
+                    logger.debug("%s reusing shared context, ref_count=%d", log_prefix, context.ref_count)
+                    context_to_wait = context
+                else:
+                    logger.warning(
+                        "%s replacing stale shared context running=%s thread_alive=%s",
+                        log_prefix,
+                        context.running,
+                        thread_alive,
+                    )
+                    cls._shared_contexts.pop(key, None)
+                    context = None
 
-            secret_preview = cls._mask_credential(api_secret, keep_prefix=4, keep_suffix=4)
-            logger.info("%s creating shared exchange testnet=%s api_secret=%s", log_prefix, testnet, secret_preview)
+            if context is None:
+                secret_preview = cls._mask_credential(api_secret, keep_prefix=4, keep_suffix=4)
+                logger.info("%s creating shared exchange testnet=%s api_secret=%s", log_prefix, testnet, secret_preview)
 
-            exchange = cls._create_exchange(
-                api_key=api_key,
-                api_secret=api_secret,
-                testnet=testnet,
-                sync_timeout=sync_timeout,
-            )
-            context = _SharedWsContext(
-                key=key,
-                log_prefix=log_prefix,
-                exchange=exchange,
-                sync_timeout=sync_timeout,
-                ref_count=1,  # Initialize reference count
-            )
-            context.thread = threading.Thread(
-                target=cls._run_shared_loop,
-                args=(key,),
-                daemon=True,
-                name=f"BinanceSpotWS-{api_key[:8]}",
-            )
-            cls._shared_contexts[key] = context
-            context.thread.start()
-            logger.info("%s shared ws thread started: %s ref_count=1", log_prefix, context.thread.name)
-            return context
+                exchange = cls._create_exchange(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    testnet=testnet,
+                    sync_timeout=sync_timeout,
+                )
+                context = _SharedWsContext(
+                    key=key,
+                    log_prefix=log_prefix,
+                    exchange=exchange,
+                    sync_timeout=sync_timeout,
+                    ref_count=1,
+                )
+                context.thread = threading.Thread(
+                    target=cls._run_shared_loop,
+                    args=(key,),
+                    daemon=True,
+                    name=f"BinanceSpotWS-{api_key[:8]}",
+                )
+                cls._shared_contexts[key] = context
+                context.thread.start()
+                logger.info("%s shared ws thread started: %s ref_count=1", log_prefix, context.thread.name)
+                context_to_wait = context
+
+        if context_to_wait is None:
+            raise RuntimeError(f"{log_prefix} failed to acquire shared context")
+
+        cls._wait_for_loop_ready(context_to_wait)
+        return context_to_wait
 
     def _register_callbacks(self) -> None:
         with self._shared_context.lock:
@@ -436,6 +469,8 @@ class BinanceSpot(BaseExchange):
         loop.set_exception_handler(cls._build_loop_exception_handler())
         with context.lock:
             context.loop = loop
+            context.running = True
+        context.loop_ready.set()
 
         try:
             loop.run_until_complete(cls._ws_main(context))
@@ -458,7 +493,9 @@ class BinanceSpot(BaseExchange):
                 pass
 
             loop.close()
+            context.loop_ready.clear()
             with context.lock:
+                context.running = False
                 context.loop = None
                 context.tasks = []
             logger.info("%s shared ws loop closed", context.log_prefix)
@@ -769,8 +806,19 @@ class BinanceSpot(BaseExchange):
     def _get_shared_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         with self._shared_context.lock:
             loop = self._shared_context.loop
+            running = self._shared_context.running
+
         if loop and loop.is_running():
             return loop
+
+        if running and not self._shared_context.loop_ready.is_set():
+            wait_timeout = max(min(self._sync_timeout, 1.5), 0.2)
+            self._shared_context.loop_ready.wait(timeout=wait_timeout)
+            with self._shared_context.lock:
+                loop = self._shared_context.loop
+            if loop and loop.is_running():
+                return loop
+
         return None
 
     def _run_sync(
@@ -781,24 +829,18 @@ class BinanceSpot(BaseExchange):
         request_timeout = timeout if timeout is not None else self._sync_timeout
         loop = self._get_shared_loop()
 
-        if loop is not None:
-            try:
-                future = asyncio.run_coroutine_threadsafe(coro_factory(), loop)
-                return future.result(timeout=request_timeout)
-            except asyncio.TimeoutError as err:
-                self._log_warning("_run_sync timeout after %.2fs", request_timeout)
-                raise TimeoutError(f"_run_sync timeout after {request_timeout:.2f}s") from err
-            except RuntimeError as err:
-                self._log_warning("_run_sync shared loop runtime error, fallback to temp loop: %s", err)
+        if loop is None:
+            raise RuntimeError("shared exchange loop unavailable")
 
-        temp_loop = asyncio.new_event_loop()
         try:
-            return temp_loop.run_until_complete(asyncio.wait_for(coro_factory(), timeout=request_timeout))
-        except asyncio.TimeoutError as err:
+            future = asyncio.run_coroutine_threadsafe(coro_factory(), loop)
+            return future.result(timeout=request_timeout)
+        except (asyncio.TimeoutError, concurrent.futures.TimeoutError) as err:
             self._log_warning("_run_sync timeout after %.2fs", request_timeout)
             raise TimeoutError(f"_run_sync timeout after {request_timeout:.2f}s") from err
-        finally:
-            temp_loop.close()
+        except RuntimeError as err:
+            self._log_warning("_run_sync shared loop runtime error: %s", err)
+            raise RuntimeError("shared exchange loop unavailable") from err
 
     def _log_debug(self, message: str, *args: object) -> None:
         logger.debug("%s " + message, self._log_prefix, *args)
