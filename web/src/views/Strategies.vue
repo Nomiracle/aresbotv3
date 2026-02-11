@@ -291,9 +291,9 @@ onMounted(() => {
 	        @selection-change="(rows: Strategy[]) => selectedIds = rows.map(r => r.id)"
 	        >
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="id" label="ID" width="50" fixed="left" />
+        <el-table-column prop="id" label="ID" width="50" />
 
-        <el-table-column label="名称" width="120">
+        <el-table-column label="名称" min-width="120">
           <template #default="{ row }">
             <EditableCell
               :value="row.name"
@@ -306,7 +306,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="交易对" width="100">
+        <el-table-column label="交易对" min-width="100">
           <template #default="{ row }">
             <EditableCell
               :value="row.symbol"
@@ -319,13 +319,13 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="状态" width="70">
+        <el-table-column label="状态" min-width="70">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.id)" size="small">{{ getStatusText(row.id) }}</el-tag>
           </template>
         </el-table-column>
 
-        <el-table-column label="订单量" width="90">
+        <el-table-column label="订单量" min-width="80">
           <template #default="{ row }">
             <EditableCell
               :value="row.base_order_size"
@@ -338,7 +338,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="买偏差%" width="80">
+        <el-table-column label="买偏差%" min-width="75">
           <template #default="{ row }">
             <EditableCell
               :value="row.buy_price_deviation"
@@ -352,7 +352,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="卖偏差%" width="80">
+        <el-table-column label="卖偏差%" min-width="75">
           <template #default="{ row }">
             <EditableCell
               :value="row.sell_price_deviation"
@@ -366,7 +366,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="网格层" width="70">
+        <el-table-column label="网格层" min-width="65">
           <template #default="{ row }">
             <EditableCell
               :value="row.grid_levels"
@@ -382,7 +382,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="轮询s" width="70">
+        <el-table-column label="轮询s" min-width="65">
           <template #default="{ row }">
             <EditableCell
               :value="row.polling_interval"
@@ -396,7 +396,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="容差%" width="70">
+        <el-table-column label="容差%" min-width="65">
           <template #default="{ row }">
             <EditableCell
               :value="row.price_tolerance"
@@ -410,7 +410,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="最大持仓" width="75">
+        <el-table-column label="最大持仓" min-width="75">
           <template #default="{ row }">
             <EditableCell
               :value="row.max_open_positions"
@@ -426,7 +426,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="止损%" width="70">
+        <el-table-column label="止损%" min-width="65">
           <template #default="{ row }">
             <EditableCell
               :value="row.stop_loss"
@@ -441,7 +441,7 @@ onMounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column label="Worker" width="90">
+        <el-table-column label="Worker" min-width="90">
           <template #default="{ row }">
             <EditableCell
               :value="row.worker_name"

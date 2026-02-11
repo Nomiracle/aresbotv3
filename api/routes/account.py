@@ -104,11 +104,16 @@ def _get_supported_exchange_ids() -> List[str]:
             if item.strip()
         ]
     else:
-        configured = list(DEFAULT_SUPPORTED_EXCHANGES)
+        configured = []
 
     available_exchanges = set(getattr(ccxt, "exchanges", []))
     internal_exchanges = set(INTERNAL_SUPPORTED_EXCHANGES)
     supported_exchanges = available_exchanges | internal_exchanges
+
+    if not configured:
+        # 未配置时返回所有 CCXT 交易所 + 内部交易所
+        return sorted(available_exchanges) + list(INTERNAL_SUPPORTED_EXCHANGES)
+
     validated: List[str] = []
     for exchange_id in configured:
         if exchange_id not in supported_exchanges:
@@ -118,10 +123,7 @@ def _get_supported_exchange_ids() -> List[str]:
             continue
         validated.append(exchange_id)
 
-    if validated:
-        return validated
-
-    return [exchange_id for exchange_id in DEFAULT_SUPPORTED_EXCHANGES if exchange_id in supported_exchanges]
+    return validated or sorted(available_exchanges) + list(INTERNAL_SUPPORTED_EXCHANGES)
 
 
 def _build_exchange_options() -> List[ExchangeOptionResponse]:

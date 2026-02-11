@@ -119,7 +119,7 @@ onMounted(() => {
     <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
       <el-form-item label="交易所" prop="exchange">
         <div style="display: flex; width: 100%; gap: 8px; align-items: center;">
-          <el-select v-model="form.exchange" style="flex: 1;">
+          <el-select v-model="form.exchange" filterable placeholder="搜索交易所" style="flex: 1;">
             <el-option
               v-for="ex in exchanges"
               :key="ex.value"
