@@ -264,42 +264,25 @@ function formatOrderValue(value: number) {
   return `$${value.toFixed(2)}`
 }
 
-// 格式化挂单显示
-function formatPriceRange(prices: number[]): string {
-  if (!prices.length) {
-    return '-'
+function formatQuantity(quantity: number): string {
+  const absQuantity = Math.abs(quantity)
+  let maxFractionDigits = 8
+
+  if (absQuantity >= 1000) {
+    maxFractionDigits = 2
+  } else if (absQuantity >= 1) {
+    maxFractionDigits = 4
   }
-  const minPrice = Math.min(...prices)
-  const maxPrice = Math.max(...prices)
-  if (minPrice === maxPrice) {
-    return `$${formatPrice(minPrice)}`
-  }
-  return `$${formatPrice(minPrice)}~$${formatPrice(maxPrice)}`
+
+  return quantity.toLocaleString('en-US', { maximumFractionDigits: maxFractionDigits })
 }
 
-function calcAvgStepPercent(prices: number[], anchorPrice: number, descending: boolean): number | null {
-  if (!prices.length || !Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+function calcPriceOffsetPercent(price: number, anchorPrice: number | null | undefined): number | null {
+  if (!Number.isFinite(price) || !Number.isFinite(anchorPrice) || !anchorPrice || anchorPrice <= 0) {
     return null
   }
 
-  const merged = [anchorPrice, ...prices]
-  merged.sort((a, b) => (descending ? b - a : a - b))
-
-  const diffs: number[] = []
-  for (let i = 1; i < merged.length; i += 1) {
-    const prev = merged[i - 1]
-    const current = merged[i]
-    if (!prev) {
-      continue
-    }
-    diffs.push(((current - prev) / prev) * 100)
-  }
-
-  if (!diffs.length) {
-    return null
-  }
-
-  return diffs.reduce((total, value) => total + value, 0) / diffs.length
+  return ((price - anchorPrice) / anchorPrice) * 100
 }
 
 function formatSignedPercent(value: number, fractionDigits = 3): string {
@@ -307,31 +290,35 @@ function formatSignedPercent(value: number, fractionDigits = 3): string {
   return `${sign}${value.toFixed(fractionDigits)}%`
 }
 
-interface OrderSummary {
-  range: string
-  avgStep: number | null
+function formatOrderEntry(order: OrderDetail, currentPrice: number | null | undefined): string {
+  const offset = calcPriceOffsetPercent(order.price, currentPrice)
+  const offsetText = offset === null ? '-' : formatSignedPercent(offset)
+  return `$${formatPrice(order.price)}@${formatQuantity(order.quantity)}（${offsetText}）`
 }
 
-function buildOrderSummary(
+function buildOrderDisplay(
   orders: OrderDetail[],
-  currentPrice: number | null | undefined,
-  descending: boolean
-): OrderSummary {
-  const prices = orders.map(o => o.price)
-  const range = formatPriceRange(prices)
-  const avgStep = currentPrice ? calcAvgStepPercent(prices, currentPrice, descending) : null
-  return {
-    range,
-    avgStep,
+  currentPrice: number | null | undefined
+): string[] {
+  if (!orders.length) {
+    return []
   }
+
+  const formattedOrders = orders.map(order => formatOrderEntry(order, currentPrice))
+
+  if (formattedOrders.length <= 3) {
+    return formattedOrders
+  }
+
+  return [formattedOrders[0], formattedOrders[1], '...', formattedOrders[formattedOrders.length - 1]]
 }
 
-const buySummary = computed(() =>
-  buildOrderSummary(sortedBuyOrders.value, props.status?.current_price, true)
+const buyOrderDisplay = computed(() =>
+  buildOrderDisplay(sortedBuyOrders.value, props.status?.current_price)
 )
 
-const sellSummary = computed(() =>
-  buildOrderSummary(sortedSellOrders.value, props.status?.current_price, false)
+const sellOrderDisplay = computed(() =>
+  buildOrderDisplay(sortedSellOrders.value, props.status?.current_price)
 )
 
 onMounted(() => {
@@ -443,18 +430,30 @@ onUnmounted(() => {
     <div class="orders-section">
       <div class="order-line buy">
         <span class="order-label">买单({{ status?.pending_buys ?? 0 }}):</span>
-        <span v-if="!sortedBuyOrders.length" class="order-empty">-</span>
-        <span v-else class="order-summary">
-          {{ buySummary.range }}
-          <span v-if="buySummary.avgStep !== null" class="order-step">(均{{ formatSignedPercent(buySummary.avgStep) }})</span>
+        <span v-if="!buyOrderDisplay.length" class="order-empty">-</span>
+        <span v-else class="order-list">
+          <span
+            v-for="(item, itemIndex) in buyOrderDisplay"
+            :key="`buy-${itemIndex}`"
+            class="order-item"
+            :class="{ ellipsis: item === '...' }"
+          >
+            {{ item }}
+          </span>
         </span>
       </div>
       <div class="order-line sell">
         <span class="order-label">卖单({{ status?.pending_sells ?? 0 }}):</span>
-        <span v-if="!sortedSellOrders.length" class="order-empty">-</span>
-        <span v-else class="order-summary">
-          {{ sellSummary.range }}
-          <span v-if="sellSummary.avgStep !== null" class="order-step">(均{{ formatSignedPercent(sellSummary.avgStep) }})</span>
+        <span v-if="!sellOrderDisplay.length" class="order-empty">-</span>
+        <span v-else class="order-list">
+          <span
+            v-for="(item, itemIndex) in sellOrderDisplay"
+            :key="`sell-${itemIndex}`"
+            class="order-item"
+            :class="{ ellipsis: item === '...' }"
+          >
+            {{ item }}
+          </span>
         </span>
       </div>
     </div>
@@ -674,22 +673,24 @@ onUnmounted(() => {
 .order-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 0;
+  color: #606266;
+  font-weight: 500;
 }
 
 .order-item {
   white-space: nowrap;
 }
 
-.order-summary {
-  color: #606266;
-  font-weight: 500;
+.order-item:not(:last-child)::after {
+  content: '|';
+  margin: 0 6px;
+  color: #dcdfe6;
 }
 
-.order-step {
-  margin-left: 6px;
-  color: #17a2b8;
-  font-weight: 500;
+.order-item.ellipsis {
+  color: #909399;
+  font-weight: 400;
 }
 
 .error-row {
