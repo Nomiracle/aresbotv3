@@ -312,6 +312,15 @@ async def get_running_strategies(
     """Get all running strategies from Redis."""
     redis_client = get_redis_client()
     running = redis_client.get_all_running_strategies(user_email=user_email)
+    running = [info for info in running if info.get("status") == "running"]
+    running.sort(
+        key=lambda info: (
+            str(info.get("exchange") or "").lower(),
+            str(info.get("symbol") or "").upper(),
+            int(info.get("strategy_id") or 0),
+        )
+    )
+
     return [
         RunningStrategyResponse(
             strategy_id=info["strategy_id"],
@@ -348,7 +357,6 @@ async def get_running_strategies(
             last_error=info.get("last_error") or None,
         )
         for info in running
-        if info.get("status") == "running"
     ]
 
 
