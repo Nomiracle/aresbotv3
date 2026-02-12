@@ -61,9 +61,11 @@ class TradingEngine:
 
     @property
     def _rules(self) -> TradingRules:
-        if self._trading_rules is None:
-            self._trading_rules = self._rules
-        return self._trading_rules
+        rules = self._trading_rules
+        if rules is None:
+            rules = self.exchange.get_trading_rules()
+            self._trading_rules = rules
+        return rules
 
     def start(self) -> None:
         """启动交易引擎"""
