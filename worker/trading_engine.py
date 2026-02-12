@@ -51,6 +51,8 @@ class TradingEngine:
         self._running = False
         self._current_price: Optional[float] = None
         self._last_error: Optional[str] = None
+        self._last_error_time: float = 0
+        self._error_retain_seconds: float = 30
         self._sync_interval = sync_interval
         self._last_sync_time = 0
         self._last_status_update_time = 0
@@ -107,6 +109,7 @@ class TradingEngine:
                 except Exception as e:
                     self.log.warning("获取价格失败: %s", e, exc_info=True)
                     self._last_error = f"获取价格失败: {e}"
+                    self._last_error_time = time.time()
 
                 if self._current_price is None or self._current_price <= 0:
                     self.log.debug("主循环等待价格 #%s", loop_index)
@@ -121,7 +124,8 @@ class TradingEngine:
                 self._check_stop_loss()
                 self._periodic_sync()
 
-                self._last_error = None
+                if self._last_error and time.time() - self._last_error_time > self._error_retain_seconds:
+                    self._last_error = None
                 self._update_status(force=True, source="loop_complete")
 
                 with self._lock:
@@ -145,6 +149,7 @@ class TradingEngine:
             except Exception as e:
                 self.log.exception("主循环异常 #%s: %s", loop_index, e)
                 self._last_error = str(e)
+                self._last_error_time = time.time()
                 self._update_status(force=True, source="loop_exception")
                 if self._sleep_with_stop_check(1):
                     break
@@ -277,6 +282,7 @@ class TradingEngine:
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
             self._last_error = f"同步订单失败: {e}"
+            self._last_error_time = time.time()
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单"""
@@ -349,6 +355,7 @@ class TradingEngine:
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"买单下单失败: {error_msg}"
+            self._last_error_time = time.time()
             self.log.debug("买单下单失败 aligned_price=%s aligned_qty=%s error=%s", aligned_price, aligned_qty, error_msg)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> None:
@@ -388,6 +395,7 @@ class TradingEngine:
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"卖单下单失败: {error_msg}"
+            self._last_error_time = time.time()
             self.log.debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
 
     def _handle_buy_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
