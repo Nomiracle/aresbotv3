@@ -14,6 +14,7 @@ from worker.core.base_exchange import (
     OrderStatus,
     TradingRules,
 )
+from worker.core.log_utils import make_log_prefix
 from worker.exchanges.stream.base import StreamManager
 from worker.exchanges.stream.ccxt_stream import CcxtStreamManager
 
@@ -50,8 +51,7 @@ class ExchangeSpot(BaseExchange):
             self._sync_timeout = 10.0
 
         self._trading_rules: Optional[TradingRules] = None
-        api_key_prefix = (api_key or "")[:8]
-        self._log_prefix = f"[{exchange_id}] [{self._market_symbol}] [{api_key_prefix}]"
+        self._log_prefix = make_log_prefix(self._market_symbol, api_key, exchange_id)
 
         # 创建 CCXT 实例
         self._exchange = self._create_exchange(

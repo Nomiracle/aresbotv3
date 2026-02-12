@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 import math
 
+from worker.core.log_utils import make_log_prefix
+
 
 class OrderStatus(Enum):
     PENDING = "pending"
@@ -77,13 +79,8 @@ class BaseExchange(ABC):
     @property
     def log_prefix(self) -> str:
         """获取日志前缀 [SYMBOL] [API_KEY_PREFIX] [EXCHANGE_ID]"""
-        symbol = self.symbol
-        if "/" not in symbol:
-            if symbol.upper().endswith("USDT") and len(symbol) > 4:
-                symbol = f"{symbol[:-4]}/USDT".upper()
-        api_key_prefix = (self.api_key or "")[:8]
         exchange_id = self.get_exchange_info().get("id", "unknown")
-        return f"[{symbol}] [{api_key_prefix}] [{exchange_id}]"
+        return make_log_prefix(self.symbol, self.api_key, exchange_id)
 
     @classmethod
     @abstractmethod

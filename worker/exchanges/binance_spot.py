@@ -20,6 +20,7 @@ from worker.core.base_exchange import (
     OrderStatus,
     TradingRules,
 )
+from worker.core.log_utils import make_log_prefix
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ class BinanceSpot(BaseExchange):
         self._orders_lock = threading.Lock()
 
         api_key_prefix = (api_key or "")[:8]
-        self._log_prefix = f"[{self._market_symbol}] [{api_key_prefix}]"
+        self._log_prefix = make_log_prefix(self._market_symbol, api_key, "binance_spot")
         self._subscriber_id = id(self)
 
         self._shared_key = self._make_shared_key(

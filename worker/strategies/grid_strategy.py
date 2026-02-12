@@ -2,18 +2,25 @@ from typing import Mapping, Optional
 import logging
 
 from worker.core.base_strategy import BaseStrategy, Signal, StrategyConfig, TradeDecision
+from worker.core.log_utils import PrefixAdapter
 from worker.domain.order import Order
 
 
 class GridStrategy(BaseStrategy):
     """网格策略实现"""
 
-    def __init__(self, config: StrategyConfig):
+    def __init__(self, config: StrategyConfig, log_prefix: str = ""):
         super().__init__(config)
-        self.logger = logging.LoggerAdapter(
-            logging.getLogger(__name__),
-            {"symbol": config.symbol},
-        )
+        if log_prefix:
+            self.logger = PrefixAdapter(
+                logging.getLogger(__name__),
+                {"prefix": log_prefix},
+            )
+        else:
+            self.logger = logging.LoggerAdapter(
+                logging.getLogger(__name__),
+                {"symbol": config.symbol},
+            )
 
     def should_buy(
         self,

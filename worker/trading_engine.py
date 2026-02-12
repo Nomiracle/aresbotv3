@@ -8,16 +8,12 @@ import time
 
 from worker.core.base_exchange import BaseExchange, ExchangeOrder, OrderStatus
 from worker.core.base_strategy import BaseStrategy
+from worker.core.log_utils import PrefixAdapter
 from worker.db import TradeStore, TradeRecord
 from worker.domain import Order, OrderState, PositionTracker, RiskManager
 from worker.engine.position_syncer import PositionSyncer
 
 _logger = logging.getLogger(__name__)
-
-
-class _PrefixAdapter(logging.LoggerAdapter):
-    def process(self, msg, kwargs):
-        return f"{self.extra['prefix']} {msg}", kwargs
 
 
 class TradingEngine:
@@ -41,7 +37,7 @@ class TradingEngine:
             position_tracker=self.position_tracker,
         )
 
-        self.log = _PrefixAdapter(_logger, {"prefix": exchange.log_prefix})
+        self.log = PrefixAdapter(_logger, {"prefix": exchange.log_prefix})
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}

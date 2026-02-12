@@ -7,6 +7,7 @@ import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from worker.core.base_exchange import ExchangeOrder, OrderStatus
+from worker.core.log_utils import make_log_prefix
 from worker.exchanges.stream.base import StreamManager
 
 logger = logging.getLogger(__name__)
@@ -53,15 +54,15 @@ class CcxtStreamManager(StreamManager):
             if instance is not None and instance._running:
                 instance._ref_count += 1
                 logger.debug(
-                    "[%s] reuse stream, ref_count=%d",
-                    exchange_id,
+                    "%s reuse stream, ref_count=%d",
+                    instance._log_prefix,
                     instance._ref_count,
                 )
                 return instance
 
             if instance is not None:
                 logger.warning(
-                    "[%s] replacing stale stream instance", exchange_id
+                    "%s replacing stale stream instance", instance._log_prefix
                 )
                 cls._pool.pop(key, None)
 
@@ -74,7 +75,7 @@ class CcxtStreamManager(StreamManager):
             cls._pool[key] = instance
             instance._start_ws_thread()
             logger.info(
-                "[%s] created stream, ref_count=1", exchange_id
+                "%s created stream, ref_count=1", instance._log_prefix
             )
             return instance
 
@@ -85,8 +86,8 @@ class CcxtStreamManager(StreamManager):
             instance._ref_count -= 1
             remaining = instance._ref_count
             logger.debug(
-                "[%s] release stream, ref_count=%d",
-                instance._exchange_id,
+                "%s release stream, ref_count=%d",
+                instance._log_prefix,
                 remaining,
             )
             if remaining > 0:
@@ -106,7 +107,12 @@ class CcxtStreamManager(StreamManager):
         self._key = key
         self._exchange = exchange
         self._exchange_id = exchange_id
+        self._api_key = key[0]
         self._ref_count = 0
+
+        # 通用前缀 (不含 symbol)
+        api_key_prefix = (self._api_key or "")[:8]
+        self._log_prefix = f"[{api_key_prefix}] [{exchange_id}]"
 
         # 缓存
         self._prices: Dict[str, Tuple[float, float]] = {}
@@ -140,12 +146,14 @@ class CcxtStreamManager(StreamManager):
     def start(self, symbol: str) -> None:
         with self._lock:
             self._subscribed_symbols.add(symbol)
-        logger.debug("[%s] subscribed symbol: %s", self._exchange_id, symbol)
+        prefix = make_log_prefix(symbol, self._api_key, self._exchange_id)
+        logger.debug("%s subscribed", prefix)
 
     def stop(self, symbol: str) -> None:
         with self._lock:
             self._subscribed_symbols.discard(symbol)
-        logger.debug("[%s] unsubscribed symbol: %s", self._exchange_id, symbol)
+        prefix = make_log_prefix(symbol, self._api_key, self._exchange_id)
+        logger.debug("%s unsubscribed", prefix)
 
     def get_price(self, symbol: str) -> Optional[float]:
         with self._lock:
@@ -250,8 +258,8 @@ class CcxtStreamManager(StreamManager):
                         if cached is not None:
                             cached.status = OrderStatus.CANCELLED
                     logger.info(
-                        "[%s] reconcile: order %s not found, marked cancelled",
-                        self._exchange_id,
+                        "%s reconcile: order %s not found, marked cancelled",
+                        self._log_prefix,
                         order_id,
                     )
                 else:
@@ -275,7 +283,7 @@ class CcxtStreamManager(StreamManager):
         self._loop_ready.wait(timeout=5.0)
 
     def _shutdown(self) -> None:
-        logger.info("[%s] shutting down stream", self._exchange_id)
+        logger.info("%s shutting down stream", self._log_prefix)
         self._running = False
 
         loop = self._loop
@@ -291,7 +299,7 @@ class CcxtStreamManager(StreamManager):
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=3.0)
 
-        logger.info("[%s] stream shut down", self._exchange_id)
+        logger.info("%s stream shut down", self._log_prefix)
 
     async def _close_exchange(self) -> None:
         try:
@@ -310,7 +318,7 @@ class CcxtStreamManager(StreamManager):
         try:
             loop.run_until_complete(self._ws_main())
         except Exception as err:
-            logger.debug("[%s] ws loop error: %s", self._exchange_id, err)
+            logger.debug("%s ws loop error: %s", self._log_prefix, err)
         finally:
             pending = asyncio.all_tasks(loop)
             for task in pending:
@@ -331,7 +339,7 @@ class CcxtStreamManager(StreamManager):
             self._loop = None
             self._running = False
             self._loop_ready.clear()
-            logger.info("[%s] ws loop closed", self._exchange_id)
+            logger.info("%s ws loop closed", self._log_prefix)
 
     def _loop_exception_handler(
         self,
@@ -357,7 +365,7 @@ class CcxtStreamManager(StreamManager):
                 result, asyncio.CancelledError
             ):
                 logger.warning(
-                    "[%s] ws task error: %s", self._exchange_id, result
+                    "%s ws task error: %s", self._log_prefix, result
                 )
 
     # ==================== WS 监听循环 ====================
@@ -444,18 +452,20 @@ class CcxtStreamManager(StreamManager):
                         continue
 
                     if order.status == OrderStatus.FILLED:
+                        sym_prefix = make_log_prefix(order_symbol, self._api_key, self._exchange_id)
                         logger.info(
-                            "[%s] order_filled id=%s side=%s price=%s qty=%s",
-                            order_symbol,
+                            "%s order_filled id=%s side=%s price=%s qty=%s",
+                            sym_prefix,
                             order.order_id,
                             order.side,
                             order.price,
                             order.filled_quantity,
                         )
                     elif order.status == OrderStatus.CANCELLED:
+                        sym_prefix = make_log_prefix(order_symbol, self._api_key, self._exchange_id)
                         logger.info(
-                            "[%s] order_cancelled id=%s side=%s",
-                            order_symbol,
+                            "%s order_cancelled id=%s side=%s",
+                            sym_prefix,
                             order.order_id,
                             order.side,
                         )
@@ -478,7 +488,7 @@ class CcxtStreamManager(StreamManager):
     # ==================== 统计日志 ====================
 
     async def _log_stats_loop(self) -> None:
-        """每 10 秒输出一次缓存统计"""
+        """每 10 秒按 symbol 分别输出缓存统计"""
         while self._running:
             try:
                 await asyncio.sleep(10)
@@ -486,44 +496,38 @@ class CcxtStreamManager(StreamManager):
                 break
 
             with self._lock:
-                total_orders = len(self._orders)
-                active_orders = 0
-                filled_orders = 0
-                partial_orders = 0
-                cancelled_orders = 0
-                for o in self._orders.values():
-                    if o.status == OrderStatus.FILLED:
-                        filled_orders += 1
-                    elif o.status == OrderStatus.PARTIALLY_FILLED:
-                        partial_orders += 1
-                    elif o.status == OrderStatus.CANCELLED:
-                        cancelled_orders += 1
-                    elif o.status == OrderStatus.PLACED:
-                        active_orders += 1
-                terminal_orders = filled_orders + cancelled_orders
+                symbols = list(self._subscribed_symbols)
+                all_orders = list(self._orders.values())
                 price_count = len(self._prices)
-                symbols_count = len(self._subscribed_symbols)
 
             elapsed = max(time.time() - self._stats_started_at, 1e-9)
-            logger.info(
-                "[%s] stream_stats symbols=%d prices=%d "
-                "orders_cache=%d active=%d filled=%d partial=%d terminal=%d "
-                "ticker_msgs=%d(%.1f/s) price_updates=%d(%.1f/s) order_msgs=%d(%.1f/s)",
-                self._exchange_id,
-                symbols_count,
-                price_count,
-                total_orders,
-                active_orders,
-                filled_orders,
-                partial_orders,
-                terminal_orders,
-                self._stats_ticker_msgs,
-                self._stats_ticker_msgs / elapsed,
-                self._stats_price_updates,
-                self._stats_price_updates / elapsed,
-                self._stats_order_msgs,
-                self._stats_order_msgs / elapsed,
-            )
+
+            for symbol in symbols:
+                sym_orders = [o for o in all_orders if o.symbol == symbol]
+                active = sum(1 for o in sym_orders if o.status == OrderStatus.PLACED)
+                filled = sum(1 for o in sym_orders if o.status == OrderStatus.FILLED)
+                partial = sum(1 for o in sym_orders if o.status == OrderStatus.PARTIALLY_FILLED)
+                cancelled = sum(1 for o in sym_orders if o.status == OrderStatus.CANCELLED)
+                terminal = filled + cancelled
+                sym_prefix = make_log_prefix(symbol, self._api_key, self._exchange_id)
+                logger.info(
+                    "%s stream_stats prices=%d "
+                    "orders_cache=%d active=%d filled=%d partial=%d terminal=%d "
+                    "ticker_msgs=%d(%.1f/s) price_updates=%d(%.1f/s) order_msgs=%d(%.1f/s)",
+                    sym_prefix,
+                    price_count,
+                    len(sym_orders),
+                    active,
+                    filled,
+                    partial,
+                    terminal,
+                    self._stats_ticker_msgs,
+                    self._stats_ticker_msgs / elapsed,
+                    self._stats_price_updates,
+                    self._stats_price_updates / elapsed,
+                    self._stats_order_msgs,
+                    self._stats_order_msgs / elapsed,
+                )
 
     # ==================== 工具方法 ====================
 
@@ -598,7 +602,7 @@ class CcxtStreamManager(StreamManager):
                 k: v for k, v in self._error_log_cache.items() if v > cutoff
             }
 
-        logger.warning(f"[{self._exchange_id}] " + message, *args)
+        logger.warning(f"{self._log_prefix} " + message, *args)
 
 
 # ==================== 模块级工具函数 ====================

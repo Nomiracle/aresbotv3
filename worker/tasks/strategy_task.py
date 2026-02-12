@@ -452,7 +452,7 @@ def _create_engine(
             symbol=strategy_config["symbol"],
             testnet=account_data.get("testnet", False),
         )
-        strategy_impl = GridStrategy(trading_config)
+        strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
     else:
         exchange = ExchangeSpot(
             api_key=api_key,
@@ -461,7 +461,7 @@ def _create_engine(
             exchange_id=exchange_name,
             testnet=account_data.get("testnet", False),
         )
-        strategy_impl = GridStrategy(trading_config)
+        strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
 
     risk_manager = RiskManager(risk_config)
     state_store = TradeStore(strategy_id)
