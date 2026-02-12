@@ -47,6 +47,7 @@ class TradingEngine:
         self._running = False
         self._current_price: Optional[float] = None
         self._trading_rules: Optional[TradingRules] = None
+        self._fee_rate: Optional[float] = None
         self._last_error: Optional[str] = None
         self._last_error_time: float = 0
         self._error_retain_seconds: float = 30
@@ -66,6 +67,14 @@ class TradingEngine:
             rules = self.exchange.get_trading_rules()
             self._trading_rules = rules
         return rules
+
+    @property
+    def _fee(self) -> float:
+        rate = self._fee_rate
+        if rate is None:
+            rate = self._fee
+            self._fee_rate = rate
+        return rate
 
     def start(self) -> None:
         """启动交易引擎"""
@@ -272,7 +281,7 @@ class TradingEngine:
             sell_meta: list[Order] = []  # 对应的买单
 
             rules = self._rules
-            fee_rate = self.exchange.get_fee_rate()
+            fee_rate = self._fee
 
             for order_id in pending_ids:
                 ex_order = exchange_order_map.get(order_id)
@@ -427,7 +436,7 @@ class TradingEngine:
     def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
         rules = self._rules
-        fee_rate = self.exchange.get_fee_rate()
+        fee_rate = self._fee
         sell_qty = buy_order.filled_quantity * (1 - fee_rate)
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(sell_qty, rules)
@@ -486,7 +495,7 @@ class TradingEngine:
     ) -> None:
         """保存成交记录（完全成交或部分成交）"""
         qty = quantity if quantity is not None else order.filled_quantity
-        fee_rate = self.exchange.get_fee_rate()
+        fee_rate = self._fee
         trade = TradeRecord(
             id=None,
             symbol=order.symbol,
@@ -661,7 +670,7 @@ class TradingEngine:
         positions_without_sells = self.position_syncer.get_positions_without_sells(pending_sells)
 
         rules = self._rules
-        fee_rate = self.exchange.get_fee_rate()
+        fee_rate = self._fee
         sell_requests: list[OrderRequest] = []
         sell_meta: list[tuple] = []  # (pos, buy_order)
 

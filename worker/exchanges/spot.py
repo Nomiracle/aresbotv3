@@ -53,6 +53,7 @@ class ExchangeSpot(BaseExchange):
             self._sync_timeout = 10.0
 
         self._trading_rules: Optional[TradingRules] = None
+        self._fee_rate: Optional[float] = None
         self._log_prefix = make_log_prefix(self._market_symbol, api_key, exchange_id)
 
         # 创建 CCXT 实例
@@ -398,7 +399,38 @@ class ExchangeSpot(BaseExchange):
         return self._trading_rules
 
     def get_fee_rate(self) -> float:
-        return 0.001
+        if self._fee_rate is not None:
+            return self._fee_rate
+
+        # 优先 fetchTradingFee
+        try:
+            fee_info = self._run_sync(
+                lambda: self._exchange.fetch_trading_fee(self._market_symbol)
+            )
+            taker_fee = float(fee_info.get("taker", 0) or 0)
+            if taker_fee > 0:
+                self._fee_rate = taker_fee
+                logger.info("%s 费率(API): taker=%.4f%%", self._log_prefix, taker_fee * 100)
+                return self._fee_rate
+        except Exception as err:
+            logger.debug("%s fetch_trading_fee 失败: %s", self._log_prefix, err)
+
+        # 降级：从市场信息获取
+        try:
+            self._run_sync(lambda: self._exchange.load_markets())
+            market = self._exchange.market(self._market_symbol)
+            taker_fee = float(market.get("taker", 0) or 0)
+            if taker_fee > 0:
+                self._fee_rate = taker_fee
+                logger.info("%s 费率(市场): taker=%.4f%%", self._log_prefix, taker_fee * 100)
+                return self._fee_rate
+        except Exception as err:
+            logger.debug("%s 从市场信息获取费率失败: %s", self._log_prefix, err)
+
+        # 兜底默认值
+        self._fee_rate = 0.001
+        logger.info("%s 费率(默认): taker=%.4f%%", self._log_prefix, self._fee_rate * 100)
+        return self._fee_rate
 
     # ==================== 生命周期 ====================
 
