@@ -115,6 +115,7 @@ class TradingEngine:
                     self.log.warning("获取价格失败: %s", e, exc_info=True)
                     self._last_error = f"获取价格失败: {e}"
                     self._last_error_time = time.time()
+                t_price = time.time()
 
                 if self._current_price is None or self._current_price <= 0:
                     self.log.debug("主循环等待价格 #%s", loop_index)
@@ -124,10 +125,19 @@ class TradingEngine:
                     continue
 
                 self._sync_orders()
+                t_sync = time.time()
+
                 self._check_new_orders()
+                t_new = time.time()
+
                 self._check_reprice()
+                t_reprice = time.time()
+
                 self._check_stop_loss()
+                t_stoploss = time.time()
+
                 self._periodic_sync()
+                t_psync = time.time()
 
                 if self._last_error and time.time() - self._last_error_time > self._error_retain_seconds:
                     self._last_error = None
@@ -136,14 +146,23 @@ class TradingEngine:
                 with self._lock:
                     pending_buys = len(self._pending_buys)
                     pending_sells = len(self._pending_sells)
-                self.log.debug(
-                    "主循环完成 #%s price=%s buys=%s sells=%s positions=%s cost=%.3fs",
+
+                total = t_psync - loop_started_at
+                self.log.info(
+                    "循环#%s 价格=%s 买单=%s 卖单=%s 持仓=%s "
+                    "| 行情 %.0fms 同步 %.0fms 开仓 %.0fms 改价 %.0fms 止损 %.0fms 定期 %.0fms | 合计 %.0fms",
                     loop_index,
                     self._current_price,
                     pending_buys,
                     pending_sells,
                     self.position_tracker.get_position_count(),
-                    time.time() - loop_started_at,
+                    (t_price - loop_started_at) * 1000,
+                    (t_sync - t_price) * 1000,
+                    (t_new - t_sync) * 1000,
+                    (t_reprice - t_new) * 1000,
+                    (t_stoploss - t_reprice) * 1000,
+                    (t_psync - t_stoploss) * 1000,
+                    total * 1000,
                 )
 
                 if self._sleep_with_stop_check(
@@ -554,9 +573,9 @@ class TradingEngine:
                     else:
                         self._pending_sells[result.order_id] = new_order
 
-                    self.log.info("订单改价成功: %s -> %s, 新价格=%s", old_order.order_id, result.order_id, new_price)
+                    self.log.info("订单改价成功 [%s]: %s -> %s, 新价格=%s", old_order.side, old_order.order_id, result.order_id, new_price)
                 else:
-                    self.log.warning("订单改价失败，已移除旧单: %s", old_order.order_id)
+                    self.log.warning("订单改价失败 [%s]，已移除旧单: %s", old_order.side, old_order.order_id)
 
     def _check_stop_loss(self) -> None:
         """检查止损"""
