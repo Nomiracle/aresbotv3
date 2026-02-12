@@ -31,7 +31,7 @@ class ExchangeSpot(BaseExchange):
     - 自动检测 WebSocket 支持并创建 CcxtStreamManager
     - 不支持 WS 时走纯 REST 模式
     - 决策逻辑：缓存优先 → REST 兜底
-    - 写操作始终走 REST，WS 自动推送状态更新
+    - 写操作 WS 优先 → REST 降级，WS 自动推送状态更新
     """
 
     def __init__(
@@ -219,13 +219,15 @@ class ExchangeSpot(BaseExchange):
             )
             return []
 
-    # ==================== 写操作（始终 REST）====================
+    # ==================== 写操作（WS优先 → REST降级）====================
 
     def place_batch_orders(self, orders: List[OrderRequest]) -> List[OrderResult]:
         if not orders:
             return []
 
         has = getattr(self._exchange, "has", {})
+        if has.get("createOrderWs"):
+            return self._place_one_by_one(orders, use_ws=True)
         if has.get("createOrders"):
             return self._place_batch(orders)
 
@@ -236,6 +238,8 @@ class ExchangeSpot(BaseExchange):
             return []
 
         has = getattr(self._exchange, "has", {})
+        if has.get("cancelOrderWs"):
+            return self._cancel_one_by_one(order_ids, use_ws=True)
         if has.get("cancelOrders"):
             return self._cancel_batch(order_ids)
 
@@ -301,11 +305,12 @@ class ExchangeSpot(BaseExchange):
 
         return results
 
-    def _place_one_by_one(self, orders: List[OrderRequest]) -> List[OrderResult]:
+    def _place_one_by_one(self, orders: List[OrderRequest], use_ws: bool = False) -> List[OrderResult]:
         normalized_list = [self._normalize_create_order(o) for o in orders]
 
         def _make_coro(o: Dict[str, Any]):
-            return lambda: self._exchange.create_order(
+            method = self._exchange.create_order_ws if use_ws else self._exchange.create_order
+            return lambda: method(
                 o["symbol"], o["type"], o["side"], o["amount"], o["price"], o.get("params", {}),
             )
 
@@ -352,9 +357,10 @@ class ExchangeSpot(BaseExchange):
             )
             return self._cancel_one_by_one(order_ids)
 
-    def _cancel_one_by_one(self, order_ids: List[str]) -> List[OrderResult]:
+    def _cancel_one_by_one(self, order_ids: List[str], use_ws: bool = False) -> List[OrderResult]:
         def _make_coro(oid: str):
-            return lambda: self._exchange.cancel_order(oid, self._market_symbol)
+            method = self._exchange.cancel_order_ws if use_ws else self._exchange.cancel_order
+            return lambda: method(oid, self._market_symbol)
 
         raw_results = self._run_sync_gather(
             [_make_coro(oid) for oid in order_ids]
@@ -570,20 +576,23 @@ class ExchangeSpot(BaseExchange):
         return self._run_sync(lambda: _gather(), timeout=timeout)
 
     def edit_batch_orders(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
-        """批量改单：优先 editOrder，不支持则降级 cancel + recreate"""
+        """批量改单：优先 editOrderWs → editOrder → cancel + recreate"""
         if not edits:
             return []
 
         has = getattr(self._exchange, "has", {})
+        if has.get("editOrderWs"):
+            return self._edit_via_edit_order(edits, use_ws=True)
         if has.get("editOrder"):
             return self._edit_via_edit_order(edits)
 
         return super().edit_batch_orders(edits)
 
-    def _edit_via_edit_order(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
-        """通过 ccxt editOrder 并发改单"""
+    def _edit_via_edit_order(self, edits: List[EditOrderRequest], use_ws: bool = False) -> List[OrderResult]:
+        """通过 ccxt editOrder/editOrderWs 并发改单"""
         def _make_coro(e: EditOrderRequest):
-            return lambda: self._exchange.edit_order(
+            method = self._exchange.edit_order_ws if use_ws else self._exchange.edit_order
+            return lambda: method(
                 e.order_id, self._market_symbol, "limit", e.side.lower(), e.quantity, e.price,
             )
 
