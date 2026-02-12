@@ -120,8 +120,14 @@ class TradingEngine:
                     price = self.exchange.get_ticker_price()
                     if isinstance(price, (int, float)) and price > 0:
                         self._current_price = price
+                except TimeoutError as e:
+                    self.log.warning("获取价格超时: %s", e)
+                    self._current_price = None
+                    self._last_error = f"获取价格超时: {e}"
+                    self._last_error_time = time.time()
                 except Exception as e:
                     self.log.warning("获取价格失败: %s", e, exc_info=True)
+                    self._current_price = None
                     self._last_error = f"获取价格失败: {e}"
                     self._last_error_time = time.time()
                 t_price = time.time()

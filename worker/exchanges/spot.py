@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -54,6 +55,13 @@ class ExchangeSpot(BaseExchange):
 
         self._trading_rules: Optional[TradingRules] = None
         self._fee_rate: Optional[float] = None
+        self._markets_ready = False
+        self._markets_last_attempt_at = 0.0
+        markets_cooldown_raw = os.environ.get("EXCHANGE_MARKETS_RETRY_COOLDOWN", "5")
+        try:
+            self._markets_retry_cooldown = max(float(markets_cooldown_raw), 0.5)
+        except ValueError:
+            self._markets_retry_cooldown = 5.0
         self._log_prefix = make_log_prefix(self._market_symbol, api_key, exchange_id)
 
         # 创建 CCXT 实例
@@ -147,9 +155,19 @@ class ExchangeSpot(BaseExchange):
             if price is not None:
                 return price
 
-        ticker = self._run_sync(
-            lambda: self._exchange.fetch_ticker(self._market_symbol)
-        )
+        if not self._ensure_markets_loaded():
+            raise TimeoutError(
+                "load_markets is cooling down after previous failure"
+            )
+
+        try:
+            ticker = self._run_sync(
+                lambda: self._exchange.fetch_ticker(self._market_symbol)
+            )
+        except Exception as err:
+            if _is_timeout_exception(err):
+                raise TimeoutError(str(err)) from err
+            raise
         price = _safe_float(ticker.get("last") or ticker.get("close"))
         return price
 
@@ -365,7 +383,8 @@ class ExchangeSpot(BaseExchange):
         if self._trading_rules is not None:
             return self._trading_rules
 
-        self._run_sync(lambda: self._exchange.load_markets())
+        if not self._ensure_markets_loaded(force=True):
+            raise TimeoutError("load_markets failed while fetching trading rules")
         market = self._exchange.market(self._market_symbol)
 
         precision = market.get("precision", {})
@@ -402,22 +421,39 @@ class ExchangeSpot(BaseExchange):
         if self._fee_rate is not None:
             return self._fee_rate
 
-        # 优先 fetchTradingFee
-        try:
-            fee_info = self._run_sync(
-                lambda: self._exchange.fetch_trading_fee(self._market_symbol)
+        # 优先 fetchTradingFee（Binance 测试网不支持 sapi 费率端点）
+        has = getattr(self._exchange, "has", {})
+        supports_fetch_fee = bool(has.get("fetchTradingFee"))
+        binance_testnet_sapi_unsupported = self.testnet and self.exchange_id in (
+            "binance",
+            "binanceusdm",
+            "binancecoinm",
+        )
+
+        if supports_fetch_fee and not binance_testnet_sapi_unsupported:
+            try:
+                fee_info = self._run_sync(
+                    lambda: self._exchange.fetch_trading_fee(self._market_symbol)
+                )
+                taker_fee = float(fee_info.get("taker", 0) or 0)
+                if taker_fee > 0:
+                    self._fee_rate = taker_fee
+                    logger.info("%s 费率(API): taker=%.4f%%", self._log_prefix, taker_fee * 100)
+                    return self._fee_rate
+            except Exception as err:
+                logger.debug("%s fetch_trading_fee 失败: %s", self._log_prefix, err)
+        elif binance_testnet_sapi_unsupported:
+            logger.debug(
+                "%s testnet 模式跳过 fetch_trading_fee（sapi endpoint 不可用）",
+                self._log_prefix,
             )
-            taker_fee = float(fee_info.get("taker", 0) or 0)
-            if taker_fee > 0:
-                self._fee_rate = taker_fee
-                logger.info("%s 费率(API): taker=%.4f%%", self._log_prefix, taker_fee * 100)
-                return self._fee_rate
-        except Exception as err:
-            logger.debug("%s fetch_trading_fee 失败: %s", self._log_prefix, err)
+        else:
+            logger.debug("%s fetch_trading_fee 不可用，改用市场费率", self._log_prefix)
 
         # 降级：从市场信息获取
         try:
-            self._run_sync(lambda: self._exchange.load_markets())
+            if not self._ensure_markets_loaded(force=True):
+                raise TimeoutError("load_markets failed while fetching fee rate")
             market = self._exchange.market(self._market_symbol)
             taker_fee = float(market.get("taker", 0) or 0)
             if taker_fee > 0:
@@ -445,6 +481,34 @@ class ExchangeSpot(BaseExchange):
 
     # ==================== 内部工具 ====================
 
+    def _ensure_markets_loaded(self, force: bool = False) -> bool:
+        if self._markets_ready:
+            return True
+
+        now = time.time()
+        if (
+            not force
+            and now - self._markets_last_attempt_at < self._markets_retry_cooldown
+        ):
+            return False
+
+        self._markets_last_attempt_at = now
+
+        try:
+            self._run_sync(lambda: self._exchange.load_markets())
+            self._markets_ready = True
+            return True
+        except Exception as err:
+            if _is_timeout_exception(err):
+                logger.warning(
+                    "%s load_markets 超时: %s", self._log_prefix, err
+                )
+            else:
+                logger.warning(
+                    "%s load_markets 失败: %s", self._log_prefix, err
+                )
+            return False
+
     def _run_sync(
         self,
         coro_factory: Callable[[], Awaitable[Any]],
@@ -468,6 +532,10 @@ class ExchangeSpot(BaseExchange):
                 raise TimeoutError(
                     f"sync timeout after {request_timeout:.2f}s"
                 ) from err
+            except Exception as err:
+                if _is_timeout_exception(err):
+                    raise TimeoutError(str(err)) from err
+                raise
 
         loop = asyncio.new_event_loop()
         try:
@@ -478,6 +546,10 @@ class ExchangeSpot(BaseExchange):
             raise TimeoutError(
                 f"sync timeout after {request_timeout:.2f}s"
             ) from err
+        except Exception as err:
+            if _is_timeout_exception(err):
+                raise TimeoutError(str(err)) from err
+            raise
         finally:
             loop.close()
 
@@ -585,6 +657,15 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _is_timeout_exception(err: BaseException) -> bool:
+    if isinstance(
+        err, (TimeoutError, asyncio.TimeoutError, concurrent.futures.TimeoutError)
+    ):
+        return True
+
+    return type(err).__name__ in {"RequestTimeout", "ReadTimeout", "TimeoutError"}
 
 
 def _map_order_status(raw_status: object, filled: float) -> OrderStatus:
