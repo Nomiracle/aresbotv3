@@ -72,7 +72,7 @@ class TradingEngine:
     def _fee(self) -> float:
         rate = self._fee_rate
         if rate is None:
-            rate = self._fee
+            rate = self.exchange.get_fee_rate()
             self._fee_rate = rate
         return rate
 
