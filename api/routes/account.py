@@ -37,7 +37,6 @@ def _get_polymarket_updown15m_symbols() -> List[str]:
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",
     "binance": "Binance Spot",
-    "binance_spot": "Binance Spot",
     "binanceusdm": "Binance USDM",
     "binancecoinm": "Binance COIN-M",
     "polymarket_updown15m": "Polymarket UpDown 15m",

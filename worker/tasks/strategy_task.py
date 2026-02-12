@@ -433,7 +433,7 @@ def _create_engine(
         max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
     )
 
-    exchange_name = str(account_data.get("exchange") or "binance_spot").strip().lower()
+    exchange_name = str(account_data.get("exchange") or "binance").strip().lower()
 
     if exchange_name == "polymarket_updown15m":
         exchange = PolymarketUpDown15m(
@@ -444,15 +444,6 @@ def _create_engine(
             market_close_buffer=int(strategy_config.get("stop_loss_delay") or 180),
         )
         strategy_impl = PolymarketGridStrategy(trading_config)
-    elif exchange_name in {"binance", "binance_spot"}:
-        exchange = ExchangeSpot(
-            api_key=api_key,
-            api_secret=api_secret,
-            symbol=strategy_config["symbol"],
-            exchange_id="binance",
-            testnet=account_data.get("testnet", False),
-        )
-        strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
     else:
         exchange = ExchangeSpot(
             api_key=api_key,
