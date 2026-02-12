@@ -297,6 +297,8 @@ class TradingEngine:
 
                     if buy_order is not None:
                         buy_order.update_fill(ex_order.filled_quantity, ex_order.price)
+                        buy_order.extra['fee'] = ex_order.extra.get('fee')
+                        buy_order.extra['fee_paid_externally'] = ex_order.fee_paid_externally
                         filled_price = ex_order.price
                         self._save_trade(buy_order, filled_price)
                         self.position_tracker.add_position(
@@ -312,12 +314,20 @@ class TradingEngine:
                             current_price=self._current_price,
                         )
                         if decision:
-                            sell_qty = buy_order.filled_quantity * (1 - fee_rate)
+                            if ex_order.fee_paid_externally:
+                                sell_qty = buy_order.filled_quantity
+                                self.log.debug("手续费外部支付，卖单数量=%s", sell_qty)
+                            else:
+                                sell_qty = buy_order.filled_quantity * (1 - fee_rate)
+                                self.log.debug("手续费内部扣除，买入=%s 费率=%s 卖单=%s",
+                                              buy_order.filled_quantity, fee_rate, sell_qty)
                             aligned_price = self.exchange.align_price(decision.price, rules)
                             aligned_qty = self.exchange.align_quantity(sell_qty, rules)
                             sell_requests.append(OrderRequest(side="sell", price=aligned_price, quantity=aligned_qty))
                             sell_meta.append(buy_order)
-                        self.log.info("买单成交: %s, 价格=%s, 数量=%s", buy_order.order_id, filled_price, buy_order.filled_quantity)
+                        self.log.info("买单成交: %s, 价格=%s, 数量=%s, 外部手续费=%s",
+                                      buy_order.order_id, filled_price, buy_order.filled_quantity,
+                                      ex_order.fee_paid_externally)
 
                     elif sell_order is not None:
                         self._handle_sell_filled(sell_order, ex_order)
@@ -437,7 +447,12 @@ class TradingEngine:
         """下卖单"""
         rules = self._rules
         fee_rate = self._fee
-        sell_qty = buy_order.filled_quantity * (1 - fee_rate)
+
+        fee_paid_externally = buy_order.extra.get('fee_paid_externally', False)
+        if fee_paid_externally:
+            sell_qty = buy_order.filled_quantity
+        else:
+            sell_qty = buy_order.filled_quantity * (1 - fee_rate)
         aligned_price = self.exchange.align_price(price, rules)
         aligned_qty = self.exchange.align_quantity(sell_qty, rules)
 
@@ -681,7 +696,12 @@ class TradingEngine:
                 current_price=self._current_price,
             )
             if decision:
-                sell_qty = pos.quantity * (1 - fee_rate)
+                ex_order = self.exchange.get_order(pos.order_id)
+                fee_paid_externally = ex_order.fee_paid_externally if ex_order else False
+                if fee_paid_externally:
+                    sell_qty = pos.quantity
+                else:
+                    sell_qty = pos.quantity * (1 - fee_rate)
                 aligned_price = self.exchange.align_price(decision.price, rules)
                 aligned_qty = self.exchange.align_quantity(sell_qty, rules)
                 sell_requests.append(OrderRequest(side="sell", price=aligned_price, quantity=aligned_qty))

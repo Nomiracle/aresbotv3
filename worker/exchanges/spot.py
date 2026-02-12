@@ -550,6 +550,14 @@ class ExchangeSpot(BaseExchange):
         )
         status = _map_order_status(raw_order.get("status"), filled)
 
+        # 判断手续费是否外部支付（如使用BNB抵扣）
+        fee_paid_externally = False
+        fee_info = raw_order.get("fee")
+        if isinstance(fee_info, dict):
+            fee_currency = fee_info.get("currency", "")
+            if fee_currency == "BNB":
+                fee_paid_externally = True
+
         return ExchangeOrder(
             order_id=order_id,
             symbol=str(raw_order.get("symbol", self._market_symbol)),
@@ -560,6 +568,7 @@ class ExchangeSpot(BaseExchange):
             ),
             filled_quantity=filled,
             status=status,
+            fee_paid_externally=fee_paid_externally,
             extra={
                 "raw_status": str(raw_order.get("status") or ""),
                 "fee": raw_order.get("fee"),

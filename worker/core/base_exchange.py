@@ -72,6 +72,7 @@ class ExchangeOrder:
     filled_quantity: float = 0
     status: OrderStatus = OrderStatus.PLACED
     extra: Dict[str, Any] = field(default_factory=dict)
+    fee_paid_externally: bool = False
 
 
 class BaseExchange(ABC):
