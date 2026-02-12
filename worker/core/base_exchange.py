@@ -17,6 +17,23 @@ class OrderStatus(Enum):
 
 
 @dataclass
+class OrderRequest:
+    """下单请求"""
+    side: str          # 'buy' | 'sell'
+    price: float
+    quantity: float
+
+
+@dataclass
+class EditOrderRequest:
+    """改单请求"""
+    order_id: str
+    side: str          # 'buy' | 'sell'
+    price: float
+    quantity: float
+
+
+@dataclass
 class OrderResult:
     success: bool
     order_id: Optional[str]
@@ -99,18 +116,53 @@ class BaseExchange(ABC):
         pass
 
     @abstractmethod
-    def place_batch_orders(self, orders: List[Dict]) -> List[OrderResult]:
-        """批量下单
-
-        Args:
-            orders: [{'side': str, 'price': float, 'quantity': float}, ...]
-        """
+    def place_batch_orders(self, orders: List[OrderRequest]) -> List[OrderResult]:
+        """批量下单"""
         pass
 
     @abstractmethod
     def cancel_batch_orders(self, order_ids: List[str]) -> List[OrderResult]:
         """批量取消订单"""
         pass
+
+    def edit_batch_orders(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
+        """批量改单，默认实现：cancel + recreate，子类可覆写"""
+        if not edits:
+            return []
+
+        cancel_ids = [e.order_id for e in edits]
+        cancel_results = self.cancel_batch_orders(cancel_ids)
+
+        cancelled_set = {
+            r.order_id for r in cancel_results if r.success and r.order_id
+        }
+
+        new_orders = [
+            OrderRequest(side=e.side, price=e.price, quantity=e.quantity)
+            for e in edits
+            if e.order_id in cancelled_set
+        ]
+        if not new_orders:
+            return [
+                OrderResult(success=False, order_id=e.order_id, status=OrderStatus.FAILED, error="cancel failed")
+                for e in edits
+            ]
+
+        place_results = self.place_batch_orders(new_orders)
+
+        results: List[OrderResult] = []
+        place_idx = 0
+        for edit in edits:
+            if edit.order_id in cancelled_set:
+                if place_idx < len(place_results):
+                    results.append(place_results[place_idx])
+                    place_idx += 1
+                else:
+                    results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="no place result"))
+            else:
+                results.append(OrderResult(success=False, order_id=edit.order_id, status=OrderStatus.FAILED, error="cancel failed"))
+
+        return results
 
     @abstractmethod
     def get_order(self, order_id: str) -> Optional[ExchangeOrder]:

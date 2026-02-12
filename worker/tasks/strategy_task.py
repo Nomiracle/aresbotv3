@@ -21,7 +21,6 @@ from shared.utils.network import get_worker_network_identity
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
-from worker.exchanges.binance_spot import BinanceSpot
 from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
@@ -446,10 +445,11 @@ def _create_engine(
         )
         strategy_impl = PolymarketGridStrategy(trading_config)
     elif exchange_name in {"binance", "binance_spot"}:
-        exchange = BinanceSpot(
+        exchange = ExchangeSpot(
             api_key=api_key,
             api_secret=api_secret,
             symbol=strategy_config["symbol"],
+            exchange_id="binance",
             testnet=account_data.get("testnet", False),
         )
         strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)

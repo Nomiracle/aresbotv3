@@ -9,7 +9,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from worker.core.base_exchange import (
     BaseExchange,
+    EditOrderRequest,
     ExchangeOrder,
+    OrderRequest,
     OrderResult,
     OrderStatus,
     TradingRules,
@@ -107,7 +109,10 @@ class ExchangeSpot(BaseExchange):
                     }
                 )
                 if testnet:
-                    exchange.set_sandbox_mode(True)
+                    if exchange_id in ("binance", "binanceusdm", "binancecoinm"):
+                        exchange.enable_demo_trading(True)
+                    else:
+                        exchange.set_sandbox_mode(True)
                 return exchange
         except ImportError:
             pass
@@ -125,7 +130,10 @@ class ExchangeSpot(BaseExchange):
                 }
             )
             if testnet:
-                exchange.set_sandbox_mode(True)
+                if exchange_id in ("binance", "binanceusdm", "binancecoinm"):
+                    exchange.enable_demo_trading(True)
+                else:
+                    exchange.set_sandbox_mode(True)
             return exchange
 
         raise ValueError(f"Unsupported exchange: {exchange_id}")
@@ -194,7 +202,7 @@ class ExchangeSpot(BaseExchange):
 
     # ==================== 写操作（始终 REST）====================
 
-    def place_batch_orders(self, orders: List[Dict]) -> List[OrderResult]:
+    def place_batch_orders(self, orders: List[OrderRequest]) -> List[OrderResult]:
         if not orders:
             return []
 
@@ -216,7 +224,7 @@ class ExchangeSpot(BaseExchange):
 
     # ==================== 批量下单实现 ====================
 
-    def _place_batch(self, orders: List[Dict]) -> List[OrderResult]:
+    def _place_batch(self, orders: List[OrderRequest]) -> List[OrderResult]:
         results: List[OrderResult] = []
         batch_size = 5
 
@@ -274,45 +282,29 @@ class ExchangeSpot(BaseExchange):
 
         return results
 
-    def _place_one_by_one(self, orders: List[Dict]) -> List[OrderResult]:
+    def _place_one_by_one(self, orders: List[OrderRequest]) -> List[OrderResult]:
+        normalized_list = [self._normalize_create_order(o) for o in orders]
+
+        def _make_coro(o: Dict[str, Any]):
+            return lambda: self._exchange.create_order(
+                o["symbol"], o["type"], o["side"], o["amount"], o["price"], o.get("params", {}),
+            )
+
+        raw_results = self._run_sync_gather(
+            [_make_coro(o) for o in normalized_list]
+        )
+
         results: List[OrderResult] = []
-
-        for order in orders:
-            normalized = self._normalize_create_order(order)
-            try:
-                response = self._run_sync(
-                    lambda o=normalized: self._exchange.create_order(
-                        o["symbol"],
-                        o["type"],
-                        o["side"],
-                        o["amount"],
-                        o["price"],
-                        o.get("params", {}),
-                    )
-                )
-                order_id = response.get("id") or response.get("orderId")
+        for raw in raw_results:
+            if isinstance(raw, Exception):
+                logger.warning("%s create_order failed: %s", self._log_prefix, raw)
+                results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=str(raw)))
+            else:
+                order_id = raw.get("id") or raw.get("orderId")
                 if order_id is None:
-                    raise ValueError(f"missing order id: {response}")
-
-                results.append(
-                    OrderResult(
-                        success=True,
-                        order_id=str(order_id),
-                        status=OrderStatus.PLACED,
-                    )
-                )
-            except Exception as err:
-                logger.warning(
-                    "%s create_order failed: %s", self._log_prefix, err
-                )
-                results.append(
-                    OrderResult(
-                        success=False,
-                        order_id=None,
-                        status=OrderStatus.FAILED,
-                        error=str(err),
-                    )
-                )
+                    results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=f"missing order id: {raw}"))
+                else:
+                    results.append(OrderResult(success=True, order_id=str(order_id), status=OrderStatus.PLACED))
 
         return results
 
@@ -342,37 +334,21 @@ class ExchangeSpot(BaseExchange):
             return self._cancel_one_by_one(order_ids)
 
     def _cancel_one_by_one(self, order_ids: List[str]) -> List[OrderResult]:
-        results: List[OrderResult] = []
+        def _make_coro(oid: str):
+            return lambda: self._exchange.cancel_order(oid, self._market_symbol)
 
-        for order_id in order_ids:
-            try:
-                self._run_sync(
-                    lambda oid=order_id: self._exchange.cancel_order(
-                        oid, self._market_symbol
-                    )
-                )
-                results.append(
-                    OrderResult(
-                        success=True,
-                        order_id=order_id,
-                        status=OrderStatus.CANCELLED,
-                    )
-                )
-            except Exception as err:
-                logger.warning(
-                    "%s cancel_order failed order_id=%s: %s",
-                    self._log_prefix,
-                    order_id,
-                    err,
-                )
-                results.append(
-                    OrderResult(
-                        success=False,
-                        order_id=order_id,
-                        status=OrderStatus.FAILED,
-                        error=str(err),
-                    )
-                )
+        raw_results = self._run_sync_gather(
+            [_make_coro(oid) for oid in order_ids]
+        )
+
+        results: List[OrderResult] = []
+        for idx, raw in enumerate(raw_results):
+            oid = order_ids[idx]
+            if isinstance(raw, Exception):
+                logger.warning("%s cancel_order failed order_id=%s: %s", self._log_prefix, oid, raw)
+                results.append(OrderResult(success=False, order_id=oid, status=OrderStatus.FAILED, error=str(raw)))
+            else:
+                results.append(OrderResult(success=True, order_id=oid, status=OrderStatus.CANCELLED))
 
         return results
 
@@ -473,22 +449,66 @@ class ExchangeSpot(BaseExchange):
         finally:
             loop.close()
 
-    def _normalize_create_order(self, order: Dict) -> Dict[str, Any]:
-        amount = order.get("amount", order.get("quantity"))
-        order_type = str(order.get("type", "limit")).lower()
-        params = order.get("params") if isinstance(order.get("params"), dict) else {}
-        normalized_params = dict(params)
-        for field_name in ("timeInForce", "postOnly", "triggerPrice"):
-            if field_name in order and field_name not in normalized_params:
-                normalized_params[field_name] = order[field_name]
+    def _run_sync_gather(
+        self,
+        coro_factories: List[Callable[[], Awaitable[Any]]],
+        timeout: Optional[float] = None,
+    ) -> List[Any]:
+        """并发执行多个协程，异常不中断其他任务"""
+        if not coro_factories:
+            return []
 
+        async def _gather():
+            return await asyncio.gather(
+                *[f() for f in coro_factories], return_exceptions=True
+            )
+
+        return self._run_sync(lambda: _gather(), timeout=timeout)
+
+    def edit_batch_orders(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
+        """批量改单：优先 editOrder，不支持则降级 cancel + recreate"""
+        if not edits:
+            return []
+
+        has = getattr(self._exchange, "has", {})
+        if has.get("editOrder"):
+            return self._edit_via_edit_order(edits)
+
+        return super().edit_batch_orders(edits)
+
+    def _edit_via_edit_order(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
+        """通过 ccxt editOrder 并发改单"""
+        def _make_coro(e: EditOrderRequest):
+            return lambda: self._exchange.edit_order(
+                e.order_id, self._market_symbol, "limit", e.side.lower(), e.quantity, e.price,
+            )
+
+        raw_results = self._run_sync_gather(
+            [_make_coro(e) for e in edits]
+        )
+
+        results: List[OrderResult] = []
+        for idx, raw in enumerate(raw_results):
+            if isinstance(raw, Exception):
+                logger.warning("%s edit_order failed order_id=%s: %s", self._log_prefix, edits[idx].order_id, raw)
+                results.append(OrderResult(success=False, order_id=edits[idx].order_id, status=OrderStatus.FAILED, error=str(raw)))
+            else:
+                new_id = raw.get("id") or raw.get("orderId")
+                if new_id is not None:
+                    results.append(OrderResult(success=True, order_id=str(new_id), status=OrderStatus.PLACED))
+                else:
+                    results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="missing order id"))
+
+        return results
+
+    def _normalize_create_order(self, order: OrderRequest) -> Dict[str, Any]:
         return {
-            "symbol": str(order.get("symbol", self._market_symbol)),
-            "type": order_type,
-            "side": str(order["side"]).lower(),
-            "amount": amount,
-            "price": order.get("price"),
-            "params": normalized_params,
+            "symbol": self._market_symbol,
+            "type": "limit",
+            "side": order.side.lower(),
+            "amount": order.quantity,
+            "price": order.price,
+            "params": {},
         }
 
     def _to_exchange_order(self, raw_order: Dict[str, Any]) -> ExchangeOrder:

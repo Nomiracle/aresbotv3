@@ -21,6 +21,7 @@ from py_clob_client.order_builder.constants import BUY, SELL
 from worker.core.base_exchange import (
     BaseExchange,
     ExchangeOrder,
+    OrderRequest,
     OrderResult,
     OrderStatus,
     TradingRules,
@@ -134,7 +135,7 @@ class PolymarketUpDown15m(BaseExchange):
             raise RuntimeError("Polymarket ticker price is invalid")
         return price
 
-    def place_batch_orders(self, orders: List[Dict]) -> List[OrderResult]:
+    def place_batch_orders(self, orders: List[OrderRequest]) -> List[OrderResult]:
         if not orders:
             return []
 
@@ -147,9 +148,9 @@ class PolymarketUpDown15m(BaseExchange):
 
         results: List[OrderResult] = []
         for order in orders:
-            side = str(order.get("side", "")).upper().strip()
-            price = float(order.get("price", 0))
-            quantity = float(order.get("quantity", 0))
+            side = order.side.upper().strip()
+            price = order.price
+            quantity = order.quantity
 
             if side not in {"BUY", "SELL"}:
                 results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=f"unsupported side: {side}"))

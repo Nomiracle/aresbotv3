@@ -1,4 +1,4 @@
-from typing import Mapping, Optional
+from typing import List, Mapping, Optional
 import logging
 
 from worker.core.base_strategy import BaseStrategy, Signal, StrategyConfig, TradeDecision
@@ -79,6 +79,53 @@ class GridStrategy(BaseStrategy):
             grid_index=grid_index,
             reason=f"网格{grid_index}买入",
         )
+
+    def should_buy_batch(
+        self,
+        current_price: float,
+        pending_buy_orders: Mapping[str, Order],
+        pending_sell_orders: Mapping[str, Order],
+    ) -> List[TradeDecision]:
+        """批量生成所有空闲网格槽位的买单决策"""
+        active_buy_orders = len(pending_buy_orders)
+        active_sell_orders = len(pending_sell_orders)
+        total_orders = active_buy_orders + active_sell_orders
+
+        if total_orders >= self.config.order_grid:
+            return []
+
+        used_indices = {
+            order.grid_index
+            for order in pending_buy_orders.values()
+            if order.grid_index > 0
+        }
+        # sell 订单也占用 grid 槽位
+        used_sell_indices = {
+            order.grid_index
+            for order in pending_sell_orders.values()
+            if order.grid_index > 0
+        }
+
+        decisions: List[TradeDecision] = []
+        for grid_index in range(1, self.config.order_grid + 1):
+            if grid_index in used_indices or grid_index in used_sell_indices:
+                continue
+            if total_orders + len(decisions) >= self.config.order_grid:
+                break
+
+            buy_price = self._calculate_buy_price(
+                current_price=current_price,
+                grid_index=grid_index,
+            )
+            decisions.append(TradeDecision(
+                signal=Signal.BUY,
+                price=buy_price,
+                quantity=self.config.quantity,
+                grid_index=grid_index,
+                reason=f"网格{grid_index}买入",
+            ))
+
+        return decisions
 
     def should_sell(
         self,

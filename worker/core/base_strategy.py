@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, TYPE_CHECKING
+from typing import Any, List, Mapping, Optional, TYPE_CHECKING
 from enum import Enum
 
 if TYPE_CHECKING:
@@ -63,6 +63,16 @@ class BaseStrategy(ABC):
     ) -> Optional[TradeDecision]:
         """判断是否需要下买单"""
         pass
+
+    def should_buy_batch(
+        self,
+        current_price: float,
+        pending_buy_orders: Mapping[str, "Order"],
+        pending_sell_orders: Mapping[str, "Order"],
+    ) -> List[TradeDecision]:
+        """批量生成买单决策，默认调用 should_buy 返回单个"""
+        decision = self.should_buy(current_price, pending_buy_orders, pending_sell_orders)
+        return [decision] if decision else []
 
     @abstractmethod
     def should_sell(

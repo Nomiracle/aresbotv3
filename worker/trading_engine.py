@@ -6,7 +6,7 @@ import threading
 import logging
 import time
 
-from worker.core.base_exchange import BaseExchange, ExchangeOrder, OrderStatus
+from worker.core.base_exchange import BaseExchange, EditOrderRequest, ExchangeOrder, OrderRequest, OrderStatus, TradingRules
 from worker.core.base_strategy import BaseStrategy
 from worker.core.log_utils import PrefixAdapter
 from worker.db import TradeStore, TradeRecord
@@ -46,6 +46,7 @@ class TradingEngine:
 
         self._running = False
         self._current_price: Optional[float] = None
+        self._trading_rules: Optional[TradingRules] = None
         self._last_error: Optional[str] = None
         self._last_error_time: float = 0
         self._error_retain_seconds: float = 30
@@ -57,6 +58,12 @@ class TradingEngine:
         self._stop_signal_logged = False
 
         self.on_status_update: Optional[callable] = None
+
+    @property
+    def _rules(self) -> TradingRules:
+        if self._trading_rules is None:
+            self._trading_rules = self._rules
+        return self._trading_rules
 
     def start(self) -> None:
         """启动交易引擎"""
@@ -231,13 +238,20 @@ class TradingEngine:
         self.log.info("启动恢复挂单 buys=%s sells=%s", len(recovered_buys), len(recovered_sells))
 
     def _sync_orders(self) -> None:
-        """同步订单状态"""
+        """同步订单状态（批量下卖单）"""
         try:
             exchange_orders = self.exchange.get_open_orders()
             exchange_order_map = {o.order_id: o for o in exchange_orders}
 
             with self._lock:
                 pending_ids = list(self._pending_buys.keys()) + list(self._pending_sells.keys())
+
+            # 收集买单成交后需要下的卖单
+            sell_requests: list[OrderRequest] = []
+            sell_meta: list[Order] = []  # 对应的买单
+
+            rules = self._rules
+            fee_rate = self.exchange.get_fee_rate()
 
             for order_id in pending_ids:
                 ex_order = exchange_order_map.get(order_id)
@@ -247,13 +261,34 @@ class TradingEngine:
                         continue
 
                 if ex_order.status == OrderStatus.FILLED:
-                    # 处理完全成交
                     with self._lock:
                         buy_order = self._pending_buys.pop(order_id, None)
                         sell_order = self._pending_sells.pop(order_id, None) if buy_order is None else None
 
                     if buy_order is not None:
-                        self._handle_buy_filled(buy_order, ex_order)
+                        buy_order.update_fill(ex_order.filled_quantity, ex_order.price)
+                        filled_price = ex_order.price
+                        self._save_trade(buy_order, filled_price)
+                        self.position_tracker.add_position(
+                            order_id=buy_order.order_id,
+                            symbol=buy_order.symbol,
+                            quantity=buy_order.filled_quantity,
+                            entry_price=filled_price,
+                            grid_index=buy_order.grid_index,
+                        )
+                        decision = self.strategy.should_sell(
+                            buy_price=filled_price,
+                            buy_quantity=buy_order.filled_quantity,
+                            current_price=self._current_price,
+                        )
+                        if decision:
+                            sell_qty = buy_order.filled_quantity * (1 - fee_rate)
+                            aligned_price = self.exchange.align_price(decision.price, rules)
+                            aligned_qty = self.exchange.align_quantity(sell_qty, rules)
+                            sell_requests.append(OrderRequest(side="sell", price=aligned_price, quantity=aligned_qty))
+                            sell_meta.append(buy_order)
+                        self.log.info("买单成交: %s, 价格=%s, 数量=%s", buy_order.order_id, filled_price, buy_order.filled_quantity)
+
                     elif sell_order is not None:
                         self._handle_sell_filled(sell_order, ex_order)
 
@@ -275,13 +310,37 @@ class TradingEngine:
                     if new_filled > 0:
                         self._save_trade(order, ex_order.price, quantity=new_filled)
 
+            # 批量下卖单
+            if sell_requests:
+                self.log.debug("批量下卖单 count=%s", len(sell_requests))
+                results = self.exchange.place_batch_orders(sell_requests)
+                with self._lock:
+                    for idx, result in enumerate(results):
+                        buy_order = sell_meta[idx]
+                        if result.success and result.order_id:
+                            sell_order = Order(
+                                order_id=result.order_id,
+                                symbol=self.strategy.config.symbol,
+                                side="sell",
+                                price=sell_requests[idx].price,
+                                quantity=sell_requests[idx].quantity,
+                                grid_index=buy_order.grid_index,
+                                state=OrderState.PLACED,
+                                related_order_id=buy_order.order_id,
+                            )
+                            self._pending_sells[result.order_id] = sell_order
+                            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, sell_requests[idx].price, sell_requests[idx].quantity)
+                        else:
+                            error_msg = result.error or "下单失败"
+                            self.log.warning("卖单下单失败 buy_order=%s error=%s", buy_order.order_id, error_msg)
+
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
             self._last_error = f"同步订单失败: {e}"
             self._last_error_time = time.time()
 
     def _check_new_orders(self) -> None:
-        """检查是否需要下新单"""
+        """检查是否需要下新单（批量）"""
         with self._lock:
             active_buys = len(self._pending_buys)
             active_sells = len(self._pending_sells)
@@ -295,68 +354,58 @@ class TradingEngine:
             self.log.debug("跳过新开仓: %s", reason)
             return
 
-        decision = self.strategy.should_buy(
+        decisions = self.strategy.should_buy_batch(
             current_price=self._current_price,
             pending_buy_orders=pending_buys,
             pending_sell_orders=pending_sells,
         )
 
-        if decision:
-            self.log.debug(
-                "生成买单决策 price=%s qty=%s grid=%s",
-                decision.price,
-                decision.quantity,
-                decision.grid_index,
-            )
-            self._place_buy_order(decision.price, decision.quantity, decision.grid_index)
-        else:
+        if not decisions:
             self.log.debug(
                 "无新买单决策 active_buys=%s active_sells=%s price=%s",
                 active_buys,
                 active_sells,
                 self._current_price,
             )
+            return
 
-    def _place_buy_order(self, price: float, quantity: float, grid_index: int) -> None:
-        """下买单"""
-        rules = self.exchange.get_trading_rules()
-        aligned_price = self.exchange.align_price(price, rules)
-        aligned_qty = self.exchange.align_quantity(quantity, rules)
+        rules = self._rules
+        order_requests: list[OrderRequest] = []
+        decision_map: list = []  # 保持与 order_requests 对应
 
-        self.log.debug(
-            "准备下买单 raw_price=%s raw_qty=%s aligned_price=%s aligned_qty=%s grid=%s",
-            price, quantity, aligned_price, aligned_qty, grid_index,
-        )
+        for decision in decisions:
+            aligned_price = self.exchange.align_price(decision.price, rules)
+            aligned_qty = self.exchange.align_quantity(decision.quantity, rules)
+            order_requests.append(OrderRequest(side="buy", price=aligned_price, quantity=aligned_qty))
+            decision_map.append((decision, aligned_price, aligned_qty))
 
-        results = self.exchange.place_batch_orders([{
-            'side': 'buy',
-            'price': aligned_price,
-            'quantity': aligned_qty,
-        }])
+        self.log.debug("批量下买单 count=%s", len(order_requests))
+        results = self.exchange.place_batch_orders(order_requests)
 
-        if results and results[0].success and results[0].order_id:
-            result = results[0]
-            order = Order(
-                order_id=result.order_id,
-                symbol=self.strategy.config.symbol,
-                side="buy",
-                price=aligned_price,
-                quantity=aligned_qty,
-                grid_index=grid_index,
-                state=OrderState.PLACED,
-            )
-            with self._lock:
-                self._pending_buys[result.order_id] = order
-            self.log.info("买单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
-        else:
-            error_msg = results[0].error if results and results[0].error else "下单失败"
-            self._last_error = f"买单下单失败: {error_msg}"
-            self._last_error_time = time.time()
-            self.log.debug("买单下单失败 aligned_price=%s aligned_qty=%s error=%s", aligned_price, aligned_qty, error_msg)
+        with self._lock:
+            for idx, result in enumerate(results):
+                decision, aligned_price, aligned_qty = decision_map[idx]
+                if result.success and result.order_id:
+                    order = Order(
+                        order_id=result.order_id,
+                        symbol=self.strategy.config.symbol,
+                        side="buy",
+                        price=aligned_price,
+                        quantity=aligned_qty,
+                        grid_index=decision.grid_index,
+                        state=OrderState.PLACED,
+                    )
+                    self._pending_buys[result.order_id] = order
+                    self.log.info("买单已下: %s, 价格=%s, 数量=%s, 网格=%s", result.order_id, aligned_price, aligned_qty, decision.grid_index)
+                else:
+                    error_msg = result.error or "下单失败"
+                    self._last_error = f"买单下单失败: {error_msg}"
+                    self._last_error_time = time.time()
+                    self.log.debug("买单下单失败 price=%s qty=%s error=%s", aligned_price, aligned_qty, error_msg)
 
-    def _place_sell_order(self, buy_order: Order, price: float) -> None:
+    def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
-        rules = self.exchange.get_trading_rules()
+        rules = self._rules
         fee_rate = self.exchange.get_fee_rate()
         sell_qty = buy_order.filled_quantity * (1 - fee_rate)
         aligned_price = self.exchange.align_price(price, rules)
@@ -367,11 +416,9 @@ class TradingEngine:
             buy_order.order_id, price, aligned_price, aligned_qty,
         )
 
-        results = self.exchange.place_batch_orders([{
-            'side': 'sell',
-            'price': aligned_price,
-            'quantity': aligned_qty,
-        }])
+        results = self.exchange.place_batch_orders([
+            OrderRequest(side="sell", price=aligned_price, quantity=aligned_qty)
+        ])
 
         if results and results[0].success and results[0].order_id:
             result = results[0]
@@ -388,36 +435,13 @@ class TradingEngine:
             with self._lock:
                 self._pending_sells[result.order_id] = order
             self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
+            return order
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"卖单下单失败: {error_msg}"
             self._last_error_time = time.time()
             self.log.debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
-
-    def _handle_buy_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
-        """处理买单成交"""
-        order.update_fill(ex_order.filled_quantity, ex_order.price)
-        filled_price = ex_order.price
-
-        self._save_trade(order, filled_price)
-
-        self.position_tracker.add_position(
-            order_id=order.order_id,
-            symbol=order.symbol,
-            quantity=order.filled_quantity,
-            entry_price=filled_price,
-            grid_index=order.grid_index,
-        )
-
-        decision = self.strategy.should_sell(
-            buy_price=filled_price,
-            buy_quantity=order.filled_quantity,
-            current_price=self._current_price,
-        )
-        if decision:
-            self._place_sell_order(order, decision.price)
-
-        self.log.info("买单成交: %s, 价格=%s, 数量=%s", order.order_id, filled_price, order.filled_quantity)
+            return None
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
         """处理卖单成交"""
@@ -458,15 +482,15 @@ class TradingEngine:
         self.state_store.save_trade(trade)
 
     def _check_reprice(self) -> None:
-        """检查是否需要改价"""
+        """检查是否需要改价（使用 edit_batch_orders）"""
         with self._lock:
             buy_orders = list(self._pending_buys.values())
             sell_orders = list(self._pending_sells.values())
 
-        to_cancel = []
-        to_place = []
+        edit_requests: list[EditOrderRequest] = []
+        order_map: list[Order] = []  # 与 edit_requests 对应
 
-        rules = self.exchange.get_trading_rules()
+        rules = self._rules
 
         for order in buy_orders:
             new_price = self.strategy.should_reprice(
@@ -477,14 +501,10 @@ class TradingEngine:
             )
             if new_price:
                 aligned_price = self.exchange.align_price(new_price, rules)
-                to_cancel.append(order.order_id)
-                to_place.append({
-                    'side': 'buy',
-                    'price': aligned_price,
-                    'quantity': order.quantity,
-                    '_order': order,
-                    '_new_price': aligned_price,
-                })
+                edit_requests.append(EditOrderRequest(
+                    order_id=order.order_id, side="buy", price=aligned_price, quantity=order.quantity,
+                ))
+                order_map.append(order)
 
         for order in sell_orders:
             new_price = self.strategy.should_reprice(
@@ -495,51 +515,28 @@ class TradingEngine:
             )
             if new_price:
                 aligned_price = self.exchange.align_price(new_price, rules)
-                to_cancel.append(order.order_id)
-                to_place.append({
-                    'side': 'sell',
-                    'price': aligned_price,
-                    'quantity': order.quantity,
-                    '_order': order,
-                    '_new_price': aligned_price,
-                })
+                edit_requests.append(EditOrderRequest(
+                    order_id=order.order_id, side="sell", price=aligned_price, quantity=order.quantity,
+                ))
+                order_map.append(order)
 
-        if not to_cancel:
+        if not edit_requests:
             return
 
-        self.log.debug("触发改价 cancel_count=%s", len(to_cancel))
-
-        cancel_results = self.exchange.cancel_batch_orders(to_cancel)
-        cancelled_ids = {
-            result.order_id
-            for result in cancel_results
-            if result.success and result.order_id
-        }
-        place_candidates = [
-            payload for payload in to_place if payload['_order'].order_id in cancelled_ids
-        ]
-
-        if not place_candidates:
-            return
-
-        place_params = [
-            {'side': p['side'], 'price': p['price'], 'quantity': p['quantity']}
-            for p in place_candidates
-        ]
-        results = self.exchange.place_batch_orders(place_params)
+        self.log.debug("触发改价 count=%s", len(edit_requests))
+        results = self.exchange.edit_batch_orders(edit_requests)
 
         with self._lock:
-            for index, payload in enumerate(place_candidates):
-                old_order = payload['_order']
-                new_price = payload['_new_price']
-                result = results[index] if index < len(results) else None
+            for idx, result in enumerate(results):
+                old_order = order_map[idx]
+                new_price = edit_requests[idx].price
 
                 if old_order.side == 'buy':
                     self._pending_buys.pop(old_order.order_id, None)
                 else:
                     self._pending_sells.pop(old_order.order_id, None)
 
-                if result and result.success and result.order_id:
+                if result.success and result.order_id:
                     new_order = Order(
                         order_id=result.order_id,
                         symbol=old_order.symbol,
@@ -557,7 +554,7 @@ class TradingEngine:
 
                     self.log.info("订单改价成功: %s -> %s, 新价格=%s", old_order.order_id, result.order_id, new_price)
                 else:
-                    self.log.warning("订单改价重下失败，已移除旧单: %s", old_order.order_id)
+                    self.log.warning("订单改价失败，已移除旧单: %s", old_order.order_id)
 
     def _check_stop_loss(self) -> None:
         """检查止损"""
@@ -589,7 +586,7 @@ class TradingEngine:
         if cancel_ids:
             self.exchange.cancel_batch_orders(cancel_ids)
 
-        rules = self.exchange.get_trading_rules()
+        rules = self._rules
         stop_price = self.exchange.align_price(self._current_price * 0.999, rules)
         stop_qty = self.exchange.align_quantity(position.quantity, rules)
 
@@ -597,11 +594,9 @@ class TradingEngine:
             self.log.warning("止损数量无效，跳过下单: %s", position.order_id)
             return
 
-        results = self.exchange.place_batch_orders([{
-            'side': 'sell',
-            'price': stop_price,
-            'quantity': stop_qty,
-        }])
+        results = self.exchange.place_batch_orders([
+            OrderRequest(side="sell", price=stop_price, quantity=stop_qty)
+        ])
 
         if results and results[0].success:
             self.log.info("止损单已下: %s", results[0].order_id)
@@ -641,8 +636,14 @@ class TradingEngine:
         self._repair_positions_and_orders(pending_sells_copy)
 
     def _repair_positions_and_orders(self, pending_sells: Dict[str, Order]) -> None:
-        """最小修复：补卖单、取消多余卖单"""
+        """最小修复：批量补卖单、取消多余卖单"""
         positions_without_sells = self.position_syncer.get_positions_without_sells(pending_sells)
+
+        rules = self._rules
+        fee_rate = self.exchange.get_fee_rate()
+        sell_requests: list[OrderRequest] = []
+        sell_meta: list[tuple] = []  # (pos, buy_order)
+
         for pos in positions_without_sells:
             decision = self.strategy.should_sell(
                 buy_price=pos.entry_price,
@@ -650,18 +651,31 @@ class TradingEngine:
                 current_price=self._current_price,
             )
             if decision:
-                buy_order = Order(
-                    order_id=pos.order_id,
-                    symbol=pos.symbol,
-                    side='buy',
-                    price=pos.entry_price,
-                    quantity=pos.quantity,
-                    grid_index=pos.grid_index,
-                    state=OrderState.FILLED,
-                    filled_quantity=pos.quantity,
-                    filled_price=pos.entry_price,
-                )
-                self._place_sell_order(buy_order, decision.price)
+                sell_qty = pos.quantity * (1 - fee_rate)
+                aligned_price = self.exchange.align_price(decision.price, rules)
+                aligned_qty = self.exchange.align_quantity(sell_qty, rules)
+                sell_requests.append(OrderRequest(side="sell", price=aligned_price, quantity=aligned_qty))
+                sell_meta.append(pos)
+
+        if sell_requests:
+            self.log.debug("批量补卖单 count=%s", len(sell_requests))
+            results = self.exchange.place_batch_orders(sell_requests)
+            with self._lock:
+                for idx, result in enumerate(results):
+                    pos = sell_meta[idx]
+                    if result.success and result.order_id:
+                        sell_order = Order(
+                            order_id=result.order_id,
+                            symbol=pos.symbol,
+                            side="sell",
+                            price=sell_requests[idx].price,
+                            quantity=sell_requests[idx].quantity,
+                            grid_index=pos.grid_index,
+                            state=OrderState.PLACED,
+                            related_order_id=pos.order_id,
+                        )
+                        self._pending_sells[result.order_id] = sell_order
+                        self.log.info("补卖单已下: %s, 价格=%s", result.order_id, sell_requests[idx].price)
 
         excess_sells = self.position_syncer.get_excess_sells(pending_sells)
         if not excess_sells:
