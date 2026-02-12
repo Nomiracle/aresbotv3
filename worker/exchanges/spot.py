@@ -204,9 +204,15 @@ class ExchangeSpot(BaseExchange):
             if orders:
                 return orders
 
+        has = getattr(self._exchange, "has", {})
+        fetch = (
+            self._exchange.fetch_open_orders_ws
+            if has.get("fetchOpenOrdersWs")
+            else self._exchange.fetch_open_orders
+        )
         try:
             raw_orders = self._run_sync(
-                lambda: self._exchange.fetch_open_orders(self._market_symbol)
+                lambda: fetch(self._market_symbol)
             )
             return [
                 self._to_exchange_order(o)

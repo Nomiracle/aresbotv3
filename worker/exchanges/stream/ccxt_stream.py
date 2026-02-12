@@ -200,10 +200,14 @@ class CcxtStreamManager(StreamManager):
 
     def _do_reconcile(self, symbol: str) -> None:
         """执行对账"""
+        has = getattr(self._exchange, "has", {})
+        fetch_coro = (
+            self._exchange.fetch_open_orders_ws(symbol)
+            if has.get("fetchOpenOrdersWs")
+            else self._exchange.fetch_open_orders(symbol)
+        )
         try:
-            rest_orders = self._run_on_loop(
-                self._exchange.fetch_open_orders(symbol)
-            )
+            rest_orders = self._run_on_loop(fetch_coro)
         except Exception as err:
             self._log_error_throttled(
                 "reconcile_fetch", "reconcile fetch_open_orders failed: %s", err
