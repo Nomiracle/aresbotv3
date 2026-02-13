@@ -21,10 +21,8 @@ from shared.utils.network import get_worker_network_identity
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
-from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
-from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
 
 
 logger = get_logger("celery.task")
@@ -436,6 +434,16 @@ def _create_engine(
     exchange_name = str(account_data.get("exchange") or "binance").strip().lower()
 
     if exchange_name == "polymarket_updown15m":
+        try:
+            from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
+            from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
+        except ModuleNotFoundError as err:
+            if err.name == "websocket":
+                raise RuntimeError(
+                    "Missing dependency 'websocket-client' for Polymarket exchange"
+                ) from err
+            raise
+
         exchange = PolymarketUpDown15m(
             api_key=api_key,
             api_secret=api_secret,
