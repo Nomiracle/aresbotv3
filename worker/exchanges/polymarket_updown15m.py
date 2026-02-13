@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import string
 import threading
 import time
 from datetime import datetime, timedelta
@@ -80,16 +81,17 @@ class PolymarketUpDown15m(BaseExchange):
         )
 
         # 初始化 ClobClient
-        private_key = api_secret
-        if private_key.startswith("0x"):
-            private_key = private_key[2:]
+        private_key = _normalize_polymarket_private_key(api_secret)
+        funder = (api_key or "").strip()
+        if not funder:
+            raise ValueError("polymarket funder address is required")
 
         self._client = ClobClient(
             host=_CLOB_HOST,
             key=private_key,
             chain_id=_CHAIN_ID,
             signature_type=2,
-            funder=api_key,
+            funder=funder,
         )
         try:
             creds = self._client.create_or_derive_api_creds()
@@ -686,3 +688,16 @@ def _select_token_id(outcomes: list, token_ids: list, desired_outcome: str) -> s
     if token_ids:
         return str(token_ids[0])
     return None
+
+
+def _normalize_polymarket_private_key(raw_secret: str) -> str:
+    private_key = (raw_secret or "").strip()
+    if private_key.lower().startswith("0x"):
+        private_key = private_key[2:]
+
+    if len(private_key) != 64 or any(ch not in string.hexdigits for ch in private_key):
+        raise ValueError(
+            "invalid polymarket private key: expected 64 hex chars (optionally prefixed with 0x)"
+        )
+
+    return private_key

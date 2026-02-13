@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import string
 from collections import defaultdict
 from functools import partial
 from typing import Any, Dict, List, Optional
@@ -154,6 +155,20 @@ def account_to_response(account: ExchangeAccount) -> AccountResponse:
 def _get_symbols_cache_key(exchange: str, testnet: bool) -> str:
     normalized_exchange = exchange.lower().strip()
     return f"symbols:{normalized_exchange}:{str(bool(testnet)).lower()}"
+
+
+def _normalize_polymarket_private_key(raw_secret: str) -> str:
+    private_key = (raw_secret or "").strip()
+    if private_key.lower().startswith("0x"):
+        private_key = private_key[2:]
+
+    if len(private_key) != 64 or any(ch not in string.hexdigits for ch in private_key):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Polymarket API Secret 必须是 64 位十六进制私钥（可带 0x 前缀）",
+        )
+
+    return private_key
 
 
 def _create_ccxt_exchange(
@@ -324,13 +339,25 @@ async def create_account(
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    encrypted_key = encrypt_api_secret(data.api_key)
-    encrypted_secret = encrypt_api_secret(data.api_secret)
+    exchange_name = data.exchange.strip().lower()
+    api_key = data.api_key.strip()
+    api_secret = data.api_secret.strip()
+
+    if exchange_name == "polymarket_updown15m":
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Polymarket API Key 不能为空（应填写资金地址/funder）",
+            )
+        api_secret = _normalize_polymarket_private_key(api_secret)
+
+    encrypted_key = encrypt_api_secret(api_key)
+    encrypted_secret = encrypt_api_secret(api_secret)
 
     account = await AccountCRUD.create(
         session,
         user_email=user_email,
-        exchange=data.exchange,
+        exchange=exchange_name,
         label=data.label,
         api_key=encrypted_key,
         api_secret=encrypted_secret,
@@ -465,10 +492,20 @@ async def update_account(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    exchange_name = account.exchange.strip().lower()
     if "api_key" in update_data and update_data["api_key"]:
-        update_data["api_key"] = encrypt_api_secret(update_data["api_key"])
+        normalized_key = str(update_data["api_key"]).strip()
+        if exchange_name == "polymarket_updown15m" and not normalized_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Polymarket API Key 不能为空（应填写资金地址/funder）",
+            )
+        update_data["api_key"] = encrypt_api_secret(normalized_key)
     if "api_secret" in update_data and update_data["api_secret"]:
-        update_data["api_secret"] = encrypt_api_secret(update_data["api_secret"])
+        normalized_secret = str(update_data["api_secret"]).strip()
+        if exchange_name == "polymarket_updown15m":
+            normalized_secret = _normalize_polymarket_private_key(normalized_secret)
+        update_data["api_secret"] = encrypt_api_secret(normalized_secret)
 
     account = await AccountCRUD.update(session, account, **update_data)
     return account_to_response(account)

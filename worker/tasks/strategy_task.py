@@ -28,6 +28,19 @@ from worker.strategies.grid_strategy import GridStrategy
 logger = get_logger("celery.task")
 
 
+def _mask_credential(value: str, keep_start: int = 6, keep_end: int = 4) -> str:
+    text = (value or "").strip()
+    if not text:
+        return "<empty>"
+
+    keep_start = max(keep_start, 0)
+    keep_end = max(keep_end, 0)
+    if len(text) <= keep_start + keep_end:
+        return "*" * len(text)
+
+    return f"{text[:keep_start]}{'*' * 6}{text[-keep_end:]}"
+
+
 @dataclass(frozen=True)
 class TaskRuntime:
     strategy_id: int
@@ -411,6 +424,15 @@ def _create_engine(
     # Decrypt API credentials
     api_key = decrypt_api_secret(account_data["api_key"])
     api_secret = decrypt_api_secret(account_data["api_secret"])
+    exchange_name = str(account_data.get("exchange") or "binance").strip().lower()
+
+    logger.info(
+        "Strategy %s credentials exchange=%s api_key=%s api_secret=%s",
+        strategy_id,
+        exchange_name,
+        _mask_credential(api_key),
+        _mask_credential(api_secret),
+    )
 
     # Build trading config
     trading_config = StrategyConfig(
@@ -430,8 +452,6 @@ def _create_engine(
         max_position_count=strategy_config["max_open_positions"],
         max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
     )
-
-    exchange_name = str(account_data.get("exchange") or "binance").strip().lower()
 
     if exchange_name == "polymarket_updown15m":
         try:
