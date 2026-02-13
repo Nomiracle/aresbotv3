@@ -8,6 +8,7 @@ import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api
 
 const symbolsCache = new Map<number, string[]>()
 const tradingFeeCache = new Map<string, TradingFee>()
+const FUTURES_EXCHANGES = new Set(['binanceusdm', 'binancecoinm'])
 
 const props = defineProps<{
   visible: boolean
@@ -34,6 +35,15 @@ const symbolOptions = computed(() => {
     options.add(form.symbol)
   }
   return Array.from(options)
+})
+
+const selectedAccount = computed(() => {
+  return accounts.value.find(item => item.id === form.account_id) || null
+})
+
+const isFuturesAccount = computed(() => {
+  const exchange = selectedAccount.value?.exchange?.toLowerCase() || ''
+  return FUTURES_EXCHANGES.has(exchange)
 })
 
 const defaultForm = {
@@ -299,7 +309,7 @@ onMounted(() => {
         <el-select
           v-model="form.symbol"
           filterable
-          placeholder="搜索或选择交易对"
+          :placeholder="isFuturesAccount ? '搜索或选择合约交易对（如 BTC/USDT:USDT）' : '搜索或选择交易对'"
           :loading="symbolsLoading"
           style="width: 100%"
         >
@@ -310,6 +320,12 @@ onMounted(() => {
             :value="s"
           />
         </el-select>
+        <div
+          v-if="isFuturesAccount"
+          style="margin-top: 8px; font-size: 12px; color: #e6a23c;"
+        >
+          合约账户建议使用单向持仓模式（One-way），卖单将按 reduceOnly 提交以避免误开反向仓位。
+        </div>
         <div v-if="form.account_id && form.symbol" style="margin-top: 8px; font-size: 12px; color: #606266;">
           <span v-if="tradingFeeLoading">手续费加载中...</span>
           <span v-else-if="tradingFee">

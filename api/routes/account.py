@@ -28,6 +28,7 @@ EXCHANGES_CACHE_KEY = "exchanges:supported:v3"
 EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
 INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m",)
 DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
+FUTURES_EXCHANGE_IDS = ("binanceusdm", "binancecoinm")
 
 
 def _get_polymarket_updown15m_symbols() -> List[str]:
@@ -171,20 +172,35 @@ def _normalize_polymarket_private_key(raw_secret: str) -> str:
     return private_key
 
 
+def _is_futures_exchange(exchange_id: str) -> bool:
+    return exchange_id.lower().strip() in FUTURES_EXCHANGE_IDS
+
+
+def _is_contract_market(market: Dict[str, Any]) -> bool:
+    return bool(
+        market.get("contract")
+        or market.get("swap")
+        or market.get("future")
+    )
+
+
 def _create_ccxt_exchange(
     exchange: str,
     testnet: bool,
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
 ) -> Any:
-    exchange_class = getattr(ccxt, exchange.lower().strip(), None)
+    normalized_exchange = exchange.lower().strip()
+    exchange_class = getattr(ccxt, normalized_exchange, None)
     if exchange_class is None:
         raise ValueError(f"Unsupported exchange: {exchange}")
+
+    default_market_type = "swap" if _is_futures_exchange(normalized_exchange) else "spot"
 
     config: Dict[str, Any] = {
         "enableRateLimit": True,
         "options": {
-            "defaultType": "spot",
+            "defaultType": default_market_type,
         },
     }
     if api_key:
@@ -203,8 +219,12 @@ def _create_ccxt_exchange(
     return exchange_client
 
 
-def _sort_symbols_by_quote(markets: Dict[str, Dict[str, Any]]) -> List[str]:
+def _sort_symbols_by_quote(
+    markets: Dict[str, Dict[str, Any]],
+    exchange: str,
+) -> List[str]:
     grouped_symbols: Dict[str, List[str]] = defaultdict(list)
+    use_contract_markets = _is_futures_exchange(exchange)
 
     for market in markets.values():
         symbol = market.get("symbol")
@@ -214,10 +234,19 @@ def _sort_symbols_by_quote(markets: Dict[str, Dict[str, Any]]) -> List[str]:
         if market.get("active") is False:
             continue
 
-        if not market.get("spot", False):
-            continue
+        if use_contract_markets:
+            if not _is_contract_market(market):
+                continue
+            quote = str(
+                market.get("settle")
+                or market.get("quote")
+                or symbol.split("/")[-1]
+            ).upper()
+        else:
+            if not market.get("spot", False):
+                continue
+            quote = str(market.get("quote") or symbol.split("/")[-1]).upper()
 
-        quote = str(market.get("quote") or symbol.split("/")[-1]).upper()
         grouped_symbols[quote].append(symbol)
 
     sorted_quotes = sorted(grouped_symbols.keys(), key=lambda quote: (quote != "USDT", quote))
@@ -240,7 +269,7 @@ def _load_account_symbols_sync(exchange: str, testnet: bool) -> List[str]:
     exchange_client = _create_ccxt_exchange(exchange=exchange, testnet=testnet)
     try:
         markets = exchange_client.load_markets()
-        return _sort_symbols_by_quote(markets)
+        return _sort_symbols_by_quote(markets, exchange=exchange)
     finally:
         _safe_close_exchange(exchange_client)
 

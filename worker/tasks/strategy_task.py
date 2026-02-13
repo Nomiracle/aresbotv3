@@ -21,6 +21,7 @@ from shared.utils.network import get_worker_network_identity
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
+from worker.exchanges.futures import ExchangeFutures, FUTURES_EXCHANGE_IDS
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
 
@@ -473,7 +474,8 @@ def _create_engine(
         )
         strategy_impl = PolymarketGridStrategy(trading_config)
     else:
-        exchange = ExchangeSpot(
+        exchange_cls = ExchangeFutures if exchange_name in FUTURES_EXCHANGE_IDS else ExchangeSpot
+        exchange = exchange_cls(
             api_key=api_key,
             api_secret=api_secret,
             symbol=strategy_config["symbol"],
