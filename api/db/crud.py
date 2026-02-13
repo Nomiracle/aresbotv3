@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from .models import ExchangeAccount, Strategy, Trade
+from .models import ExchangeAccount, Strategy, Trade, NotificationChannel
 
 
 class AccountCRUD:
@@ -372,3 +372,70 @@ class TradeCRUD:
                 else 0
             ),
         }
+
+
+class NotificationCRUD:
+    """CRUD operations for notification channels."""
+
+    @staticmethod
+    async def create(
+        session: AsyncSession,
+        user_email: str,
+        channel_type: str,
+        name: str,
+        config: dict,
+        enabled_events: list[str] | None = None,
+    ) -> NotificationChannel:
+        channel = NotificationChannel(
+            user_email=user_email,
+            channel_type=channel_type,
+            name=name,
+            config=config,
+            enabled_events=enabled_events or [],
+        )
+        session.add(channel)
+        await session.flush()
+        await session.refresh(channel)
+        return channel
+
+    @staticmethod
+    async def get_by_id(
+        session: AsyncSession, channel_id: int, user_email: str,
+    ) -> Optional[NotificationChannel]:
+        result = await session.execute(
+            select(NotificationChannel).where(
+                NotificationChannel.id == channel_id,
+                NotificationChannel.user_email == user_email,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_all(
+        session: AsyncSession, user_email: str,
+    ) -> Sequence[NotificationChannel]:
+        result = await session.execute(
+            select(NotificationChannel)
+            .where(NotificationChannel.user_email == user_email)
+            .order_by(NotificationChannel.created_at.desc())
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def update(
+        session: AsyncSession,
+        channel: NotificationChannel,
+        **kwargs,
+    ) -> NotificationChannel:
+        for key, value in kwargs.items():
+            if hasattr(channel, key) and value is not None:
+                setattr(channel, key, value)
+        await session.flush()
+        await session.refresh(channel)
+        return channel
+
+    @staticmethod
+    async def delete(
+        session: AsyncSession, channel: NotificationChannel,
+    ) -> None:
+        await session.delete(channel)

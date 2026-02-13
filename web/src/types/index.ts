@@ -159,3 +159,25 @@ export interface PaginatedResponse<T> {
   limit: number
   offset: number
 }
+
+export interface NotificationChannel {
+  id: number
+  channel_type: string
+  name: string
+  config: Record<string, string>
+  enabled_events: string[]
+  is_active: boolean
+  created_at: string
+}
+
+export interface NotificationChannelCreate {
+  channel_type: string
+  name: string
+  config: Record<string, string>
+  enabled_events: string[]
+}
+
+export interface NotifyEventInfo {
+  value: string
+  label: string
+}

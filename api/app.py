@@ -23,13 +23,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    from .routes import account, strategy, trade, user, worker
+    from .routes import account, strategy, trade, user, worker, notification
 
     app.include_router(account.router, prefix="/api/accounts", tags=["accounts"])
     app.include_router(strategy.router, prefix="/api/strategies", tags=["strategies"])
     app.include_router(trade.router, prefix="/api/trades", tags=["trades"])
     app.include_router(user.router, prefix="/api/user", tags=["user"])
     app.include_router(worker.router, prefix="/api/workers", tags=["workers"])
+    app.include_router(notification.router, prefix="/api/notifications", tags=["notifications"])
 
     @app.get("/health")
     async def health_check():

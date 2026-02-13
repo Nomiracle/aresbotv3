@@ -59,6 +59,7 @@ class TradingEngine:
         self._stop_signal_logged = False
 
         self.on_status_update: Optional[callable] = None
+        self.on_notify: Optional[callable] = None
 
     @property
     def _rules(self) -> TradingRules:
@@ -102,6 +103,15 @@ class TradingEngine:
             self.exchange.close()
         except Exception as e:
             self.log.warning("关闭交易所连接失败: %s", e)
+
+    def _emit_notify(self, event, title: str, body: str) -> None:
+        """安全地发送通知"""
+        if self.on_notify is None:
+            return
+        try:
+            self.on_notify(event, title, body)
+        except Exception as e:
+            self.log.debug("通知发送失败: %s", e)
 
     def _run_loop(self) -> None:
         """主循环"""
@@ -190,6 +200,7 @@ class TradingEngine:
                 self._last_error = str(e)
                 self._last_error_time = time.time()
                 self._update_status(force=True, source="loop_exception")
+                self._emit_notify("strategy_error", "策略异常", str(e))
                 if self._sleep_with_stop_check(1):
                     break
 
@@ -340,6 +351,11 @@ class TradingEngine:
                         self.log.info("买单成交: %s, 价格=%s, 数量=%s, 外部手续费=%s",
                                       buy_order.order_id, filled_price, buy_order.filled_quantity,
                                       ex_order.fee_paid_externally)
+                        self._emit_notify(
+                            "order_filled",
+                            f"买单成交 #{buy_order.grid_index or ''}",
+                            f"价格: {filled_price}, 数量: {buy_order.filled_quantity}",
+                        )
 
                     elif sell_order is not None:
                         self._handle_sell_filled(sell_order, ex_order)
@@ -399,6 +415,7 @@ class TradingEngine:
                     self._last_error = latest_order_error
                     self._last_error_time = time.time()
                     self._update_status(force=True, source="sync_sell_order_failed")
+                    self._emit_notify("order_failed", "卖单下单失败", latest_order_error)
 
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
@@ -478,6 +495,7 @@ class TradingEngine:
             self._last_error = latest_order_error
             self._last_error_time = time.time()
             self._update_status(force=True, source="buy_order_failed")
+            self._emit_notify("order_failed", "买单下单失败", latest_order_error)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
@@ -525,6 +543,7 @@ class TradingEngine:
             self._last_error_time = time.time()
             self.log.warning("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
             self._update_status(force=True, source="sell_order_failed")
+            self._emit_notify("order_failed", "卖单下单失败", f"买单: {buy_order.order_id}, 错误: {error_msg}")
             return None
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
@@ -546,6 +565,12 @@ class TradingEngine:
         )
 
         self.log.info("卖单成交: %s, 价格=%s, 盈亏=%s", order.order_id, filled_price, pnl)
+        pnl_str = f"{pnl:+.6f}" if pnl is not None else "N/A"
+        self._emit_notify(
+            "order_filled",
+            f"卖单成交 #{order.grid_index or ''}",
+            f"价格: {filled_price}, 盈亏: {pnl_str}",
+        )
 
     def _save_trade(
         self, order: Order, price: float,
@@ -687,6 +712,11 @@ class TradingEngine:
     def _execute_stop_loss(self, position, reason: str) -> None:
         """执行止损"""
         self.log.warning("触发止损: %s, 原因=%s", position.order_id, reason)
+        self._emit_notify(
+            "stop_loss_triggered",
+            "止损触发",
+            f"持仓: {position.order_id}, 原因: {reason}",
+        )
 
         cancel_ids = []
         with self._lock:

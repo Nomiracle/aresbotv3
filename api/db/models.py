@@ -88,3 +88,21 @@ class Trade(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
     strategy: Optional[Strategy] = Relationship(back_populates="trades")
+
+
+class NotificationChannel(SQLModel, table=True):
+    """用户通知渠道配置"""
+
+    __tablename__ = "notification_channel"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_email: str = Field(max_length=255, index=True)
+    channel_type: str = Field(max_length=50)
+    name: str = Field(max_length=100)
+    config: dict[str, Any] = Field(sa_column=Column(JSON, nullable=False))
+    enabled_events: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.now)

@@ -77,5 +77,19 @@ CREATE TABLE IF NOT EXISTS trade (
     FOREIGN KEY (strategy_id) REFERENCES strategy(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 通知渠道配置表
+CREATE TABLE IF NOT EXISTS notification_channel (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_email VARCHAR(255) NOT NULL,
+    channel_type VARCHAR(50) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    config JSON NOT NULL,
+    enabled_events JSON NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user_email (user_email),
+    INDEX idx_channel_type (channel_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 完成提示
 SELECT 'AresBot database initialized successfully!' AS message;

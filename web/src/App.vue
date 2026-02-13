@@ -14,6 +14,7 @@ const menuItems = [
   { path: '/accounts', title: '账户管理', icon: 'Wallet' },
   { path: '/strategies', title: '策略管理', icon: 'TrendCharts' },
   { path: '/trades', title: '交易记录', icon: 'List' },
+  { path: '/notifications', title: '通知管理', icon: 'Bell' },
   { path: '/profile', title: '用户信息', icon: 'User' },
 ]
 

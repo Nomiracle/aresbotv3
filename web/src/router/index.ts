@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/Trades.vue'),
     },
     {
+      path: '/notifications',
+      name: 'Notifications',
+      component: () => import('@/views/Notifications.vue'),
+    },
+    {
       path: '/profile',
       name: 'Profile',
       component: () => import('@/views/Profile.vue'),

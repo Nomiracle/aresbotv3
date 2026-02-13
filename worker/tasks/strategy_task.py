@@ -347,11 +347,14 @@ def run_strategy(
     stop_watcher: StrategyStopWatcher | None = None
     try:
         # 3. Build and run the trading engine
+        user_email = runtime_data.get("user_email", "")
+        _sync_notify_channels_to_redis(redis_client, user_email)
         engine = _create_engine(
             strategy_id=runtime.strategy_id,
             account_data=account_data,
             strategy_config=strategy_config,
             redis_client=redis_client,
+            user_email=user_email,
         )
         stop_watcher = StrategyStopWatcher(
             redis_client=redis_client,
@@ -372,6 +375,7 @@ def run_strategy(
         if is_main_thread:
             signal.signal(signal.SIGTERM, _handle_sigterm)
 
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_started", "策略已启动")
         engine.start()
 
         if is_main_thread:
@@ -391,6 +395,7 @@ def run_strategy(
             status="error",
             last_error=str(e),
         )
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_error", f"策略异常: {e}")
         raise
 
     finally:
@@ -402,6 +407,8 @@ def run_strategy(
 
         if stop_watcher:
             stop_watcher.stop()
+
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_stopped", "策略已停止")
 
         # 4. Stop engine (cancel orders + close exchange)
         if engine:
@@ -415,11 +422,73 @@ def run_strategy(
         logger.info(f"Strategy {strategy_id} stopped and cleaned up")
 
 
+def _send_lifecycle_notify(
+    user_email: str, strategy_id: int, symbol: str,
+    event_value: str, body: str,
+) -> None:
+    """发送策略生命周期通知"""
+    if not user_email:
+        return
+    try:
+        from shared.notification.base import NotifyEvent, NotifyMessage, EVENT_LABELS
+        from shared.notification.manager import get_notifier_manager
+        event = NotifyEvent(event_value)
+        title = EVENT_LABELS.get(event_value, event_value)
+        msg = NotifyMessage(
+            event=event,
+            title=title,
+            body=body,
+            user_email=user_email,
+            strategy_id=strategy_id,
+            symbol=symbol,
+        )
+        get_notifier_manager().notify_user(msg)
+    except Exception as e:
+        logger.debug("生命周期通知发送失败 strategy=%s: %s", strategy_id, e)
+
+
+def _sync_notify_channels_to_redis(redis_client, user_email: str) -> None:
+    """启动策略时，从 DB 加载用户通知渠道配置到 Redis"""
+    if not user_email:
+        return
+    try:
+        from worker.db.trade_store import build_sync_database_url
+        from sqlalchemy import create_engine, text
+        import json as _json
+        engine = create_engine(build_sync_database_url(), pool_pre_ping=True)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT channel_type, name, config, enabled_events, is_active FROM notification_channel WHERE user_email = :email"),
+                {"email": user_email},
+            ).fetchall()
+        if not rows:
+            return
+        data = []
+        for row in rows:
+            config_val = row[2]
+            if isinstance(config_val, str):
+                config_val = _json.loads(config_val)
+            events_val = row[3]
+            if isinstance(events_val, str):
+                events_val = _json.loads(events_val)
+            data.append({
+                "channel_type": row[0],
+                "name": row[1],
+                "config": config_val,
+                "enabled_events": events_val or [],
+                "is_active": bool(row[4]),
+            })
+        redis_client.client.set(f"notify:channels:{user_email}", _json.dumps(data))
+    except Exception as e:
+        logger.debug("同步通知渠道到 Redis 失败 user=%s: %s", user_email, e)
+
+
 def _create_engine(
     strategy_id: int,
     account_data: Dict[str, Any],
     strategy_config: Dict[str, Any],
     redis_client,
+    user_email: str = "",
 ) -> TradingEngine:
     """Create a trading engine instance."""
     # Decrypt API credentials
@@ -501,5 +570,28 @@ def _create_engine(
         _persist_runtime_status(redis_client, strategy_id, status)
 
     engine.on_status_update = on_status_update
+
+    # Set up notification callback
+    if user_email:
+        symbol = strategy_config.get("symbol", "")
+
+        def on_notify(event_value: str, title: str, body: str) -> None:
+            try:
+                from shared.notification.base import NotifyEvent, NotifyMessage
+                from shared.notification.manager import get_notifier_manager
+                event = NotifyEvent(event_value)
+                msg = NotifyMessage(
+                    event=event,
+                    title=title,
+                    body=body,
+                    user_email=user_email,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                )
+                get_notifier_manager().notify_user(msg)
+            except Exception as e:
+                logger.debug("通知发送失败 strategy=%s: %s", strategy_id, e)
+
+        engine.on_notify = on_notify
 
     return engine
