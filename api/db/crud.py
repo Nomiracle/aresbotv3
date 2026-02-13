@@ -1,7 +1,7 @@
 """CRUD operations for database models."""
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -211,6 +211,7 @@ class TradeCRUD:
         pnl: Optional[Decimal] = None,
         grid_index: Optional[int] = None,
         related_order_id: Optional[str] = None,
+        raw_order_info: Optional[dict[str, Any]] = None,
     ) -> Trade:
         """Create a new trade record."""
         trade = Trade(
@@ -225,6 +226,7 @@ class TradeCRUD:
             pnl=pnl,
             grid_index=grid_index,
             related_order_id=related_order_id,
+            raw_order_info=raw_order_info,
         )
         session.add(trade)
         await session.flush()

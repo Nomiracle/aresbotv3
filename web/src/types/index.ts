@@ -138,6 +138,7 @@ export interface Trade {
   pnl: string | null
   grid_index: number | null
   related_order_id: string | null
+  raw_order_info?: Record<string, unknown> | null
   created_at: string
 }
 

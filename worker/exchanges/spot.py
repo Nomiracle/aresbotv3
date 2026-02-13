@@ -659,6 +659,7 @@ class ExchangeSpot(BaseExchange):
             extra={
                 "raw_status": str(raw_order.get("status") or ""),
                 "fee": raw_order.get("fee"),
+                "raw_order": raw_order,
             },
         )
 

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS trade (
     pnl DECIMAL(20, 8) DEFAULT NULL,
     grid_index INT DEFAULT NULL,
     related_order_id VARCHAR(100) DEFAULT NULL,
+    raw_order_info JSON DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_strategy_id (strategy_id),
     INDEX idx_order_id (order_id),

@@ -305,8 +305,14 @@ class TradingEngine:
                         buy_order.update_fill(ex_order.filled_quantity, ex_order.price)
                         buy_order.extra['fee'] = ex_order.extra.get('fee')
                         buy_order.extra['fee_paid_externally'] = ex_order.fee_paid_externally
+                        raw_order_info = self._build_raw_order_info(ex_order)
+                        buy_order.extra['raw_order_info'] = raw_order_info
                         filled_price = ex_order.price
-                        self._save_trade(buy_order, filled_price)
+                        self._save_trade(
+                            buy_order,
+                            filled_price,
+                            raw_order_info=raw_order_info,
+                        )
                         self.position_tracker.add_position(
                             order_id=buy_order.order_id,
                             symbol=buy_order.symbol,
@@ -354,7 +360,12 @@ class TradingEngine:
                         new_filled = ex_order.filled_quantity - old_filled
 
                     if new_filled > 0:
-                        self._save_trade(order, ex_order.price, quantity=new_filled)
+                        self._save_trade(
+                            order,
+                            ex_order.price,
+                            quantity=new_filled,
+                            raw_order_info=self._build_raw_order_info(ex_order),
+                        )
 
             # 批量下卖单
             if sell_requests:
@@ -514,7 +525,12 @@ class TradingEngine:
             pnl = (filled_price - position.entry_price) * order.filled_quantity
             self.risk_manager.record_trade_result(pnl)
 
-        self._save_trade(order, filled_price, pnl=pnl)
+        self._save_trade(
+            order,
+            filled_price,
+            pnl=pnl,
+            raw_order_info=self._build_raw_order_info(ex_order),
+        )
 
         self.log.info("卖单成交: %s, 价格=%s, 盈亏=%s", order.order_id, filled_price, pnl)
 
@@ -522,6 +538,7 @@ class TradingEngine:
         self, order: Order, price: float,
         pnl: Optional[float] = None,
         quantity: Optional[float] = None,
+        raw_order_info: Optional[dict[str, Any]] = None,
     ) -> None:
         """保存成交记录（完全成交或部分成交）"""
         qty = quantity if quantity is not None else order.filled_quantity
@@ -537,9 +554,31 @@ class TradingEngine:
             order_id=order.order_id,
             grid_index=order.grid_index,
             related_order_id=order.related_order_id,
+            raw_order_info=raw_order_info,
             created_at=datetime.now(),
         )
         self.state_store.save_trade(trade)
+
+    @staticmethod
+    def _build_raw_order_info(exchange_order: ExchangeOrder) -> dict[str, Any]:
+        extra = exchange_order.extra if isinstance(exchange_order.extra, dict) else {}
+        raw_order = extra.get("raw_order")
+        if isinstance(raw_order, dict):
+            return dict(raw_order)
+
+        payload: dict[str, Any] = {
+            "order_id": exchange_order.order_id,
+            "symbol": exchange_order.symbol,
+            "side": exchange_order.side,
+            "price": exchange_order.price,
+            "quantity": exchange_order.quantity,
+            "filled_quantity": exchange_order.filled_quantity,
+            "status": exchange_order.status.value,
+            "fee_paid_externally": exchange_order.fee_paid_externally,
+        }
+        if extra:
+            payload["extra"] = extra
+        return payload
 
     def _check_reprice(self) -> None:
         """检查是否需要改价（使用 edit_batch_orders）"""

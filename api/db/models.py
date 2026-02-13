@@ -1,8 +1,9 @@
 """Database models using SQLModel."""
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, List
+from typing import Any, List, Optional
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel, Relationship
 
 
@@ -80,6 +81,10 @@ class Trade(SQLModel, table=True):
     pnl: Optional[Decimal] = Field(default=None, max_digits=20, decimal_places=8)
     grid_index: Optional[int] = Field(default=None)
     related_order_id: Optional[str] = Field(default=None, max_length=64)
+    raw_order_info: Optional[dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
     strategy: Optional[Strategy] = Relationship(back_populates="trades")

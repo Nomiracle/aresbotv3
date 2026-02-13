@@ -436,7 +436,7 @@ class PolymarketStreamManager(StreamManager):
                 order_id=order_id, symbol=display_symbol, side=side,
                 price=price, quantity=original_size,
                 filled_quantity=size_matched, status=OrderStatus.CANCELLED,
-                extra={"token_id": asset_id},
+                extra={"token_id": asset_id, "raw_order": data},
             )
             with self._lock:
                 self._orders[order_id] = order
@@ -448,7 +448,7 @@ class PolymarketStreamManager(StreamManager):
                 order_id=order_id, symbol=display_symbol, side=side,
                 price=price, quantity=original_size,
                 filled_quantity=0, status=OrderStatus.PLACED,
-                extra={"token_id": asset_id},
+                extra={"token_id": asset_id, "raw_order": data},
             )
             with self._lock:
                 self._orders[order_id] = order
@@ -472,7 +472,7 @@ class PolymarketStreamManager(StreamManager):
                 order_id=order_id, symbol=display_symbol, side=side,
                 price=price, quantity=original_size,
                 filled_quantity=size_matched, status=status,
-                extra={"token_id": asset_id},
+                extra={"token_id": asset_id, "raw_order": data},
             )
             with self._lock:
                 self._orders[order_id] = order
@@ -513,7 +513,7 @@ class PolymarketStreamManager(StreamManager):
                     order_id=order_id, symbol=display_symbol, side=order_side,
                     price=order_price, quantity=matched,
                     filled_quantity=matched, status=OrderStatus.FILLED,
-                    extra={"token_id": asset_id},
+                    extra={"token_id": asset_id, "raw_order": maker_order},
                 )
                 with self._lock:
                     self._orders[order_id] = order
@@ -533,7 +533,7 @@ class PolymarketStreamManager(StreamManager):
                 order_id=taker_order_id, symbol=display_symbol, side=side,
                 price=price, quantity=size,
                 filled_quantity=size, status=OrderStatus.FILLED,
-                extra={"token_id": asset_id},
+                extra={"token_id": asset_id, "raw_order": data},
             )
             with self._lock:
                 self._orders[taker_order_id] = order

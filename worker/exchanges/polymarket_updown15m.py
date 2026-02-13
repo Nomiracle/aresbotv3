@@ -612,6 +612,7 @@ class PolymarketUpDown15m(BaseExchange):
         token_id = raw.get("asset_id") or raw.get("token_id")
         if token_id:
             extra["token_id"] = str(token_id)
+        extra["raw_order"] = raw
 
         return ExchangeOrder(
             order_id=order_id,

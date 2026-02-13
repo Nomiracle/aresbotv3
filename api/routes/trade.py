@@ -1,6 +1,6 @@
 """Trade records routes."""
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -27,6 +27,7 @@ class TradeResponse(BaseModel):
     pnl: Optional[Decimal]
     grid_index: Optional[int]
     related_order_id: Optional[str]
+    raw_order_info: Optional[dict[str, Any]]
     created_at: str
 
     model_config = {"from_attributes": True}
@@ -68,6 +69,7 @@ def trade_to_response(trade: Trade) -> TradeResponse:
         pnl=trade.pnl,
         grid_index=trade.grid_index,
         related_order_id=trade.related_order_id,
+        raw_order_info=trade.raw_order_info,
         created_at=trade.created_at.isoformat(),
     )
 

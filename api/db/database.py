@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from urllib.parse import quote_plus
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlmodel import SQLModel
 
@@ -64,6 +65,25 @@ async def create_tables() -> None:
 
     async with _engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        if conn.dialect.name != "mysql":
+            return
+
+        column_exists_result = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'trade'
+                  AND COLUMN_NAME = 'raw_order_info'
+                LIMIT 1
+                """
+            )
+        )
+        if column_exists_result.scalar_one_or_none() is None:
+            await conn.execute(
+                text("ALTER TABLE trade ADD COLUMN raw_order_info JSON NULL")
+            )
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

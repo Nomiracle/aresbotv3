@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { Trade, Strategy } from '@/types'
 import { tradeApi } from '@/api/trade'
 import { strategyApi } from '@/api/strategy'
@@ -78,6 +79,38 @@ function getRelatedBuyTrade(sellTrade: Trade): Trade | null {
   ) || null
 }
 
+function stringifyRawOrderInfo(rawOrderInfo: Trade['raw_order_info']): string | null {
+  if (!rawOrderInfo) return null
+  try {
+    return JSON.stringify(rawOrderInfo, null, 2)
+  } catch {
+    return null
+  }
+}
+
+function formatRawOrderInfo(rawOrderInfo: Trade['raw_order_info']): string {
+  const text = stringifyRawOrderInfo(rawOrderInfo)
+  if (text) {
+    return text
+  }
+  return rawOrderInfo ? '原始订单信息格式化失败' : '暂无原始订单信息'
+}
+
+async function copyRawOrderInfo(rawOrderInfo: Trade['raw_order_info']) {
+  const text = stringifyRawOrderInfo(rawOrderInfo)
+  if (!text) {
+    ElMessage.warning('没有可复制的 JSON')
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('JSON 已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败，请检查浏览器剪贴板权限')
+  }
+}
+
 function handleExpandChange(_row: Trade, expandedRowsList: Trade[]) {
   expandedRows.value = expandedRowsList.map(r => r.id)
 }
@@ -124,29 +157,42 @@ onMounted(() => {
       >
         <el-table-column type="expand">
           <template #default="{ row }">
-            <div v-if="row.side === 'SELL' || row.side === 'sell'" class="expand-content">
-              <template v-if="getRelatedBuyTrade(row)">
-                <p class="expand-title">关联买入订单</p>
-                <el-descriptions :column="4" border size="small">
-                  <el-descriptions-item label="时间">{{ formatTime(getRelatedBuyTrade(row)!.created_at) }}</el-descriptions-item>
-                  <el-descriptions-item label="价格">{{ getRelatedBuyTrade(row)!.price }}</el-descriptions-item>
-                  <el-descriptions-item label="数量">{{ getRelatedBuyTrade(row)!.quantity }}</el-descriptions-item>
-                  <el-descriptions-item label="金额">{{ getRelatedBuyTrade(row)!.amount }}</el-descriptions-item>
-                  <el-descriptions-item label="订单ID">
-                    <span class="order-id-text">{{ getRelatedBuyTrade(row)!.order_id }}</span>
-                  </el-descriptions-item>
-                  <el-descriptions-item label="手续费">{{ getRelatedBuyTrade(row)!.fee }}</el-descriptions-item>
-                </el-descriptions>
-              </template>
-              <template v-else-if="row.related_order_id">
-                <p class="expand-title">关联买入订单: <span class="order-id-text">{{ row.related_order_id }}</span>（不在当前页）</p>
-              </template>
-              <template v-else>
-                <p class="expand-empty">无关联买入订单</p>
-              </template>
-            </div>
-            <div v-else class="expand-content">
-              <p class="expand-empty">买入订单无展开详情</p>
+            <div class="expand-content">
+              <div v-if="row.side === 'SELL' || row.side === 'sell'">
+                <template v-if="getRelatedBuyTrade(row)">
+                  <p class="expand-title">关联买入订单</p>
+                  <el-descriptions :column="4" border size="small">
+                    <el-descriptions-item label="时间">{{ formatTime(getRelatedBuyTrade(row)!.created_at) }}</el-descriptions-item>
+                    <el-descriptions-item label="价格">{{ getRelatedBuyTrade(row)!.price }}</el-descriptions-item>
+                    <el-descriptions-item label="数量">{{ getRelatedBuyTrade(row)!.quantity }}</el-descriptions-item>
+                    <el-descriptions-item label="金额">{{ getRelatedBuyTrade(row)!.amount }}</el-descriptions-item>
+                    <el-descriptions-item label="订单ID">
+                      <span class="order-id-text">{{ getRelatedBuyTrade(row)!.order_id }}</span>
+                    </el-descriptions-item>
+                    <el-descriptions-item label="手续费">{{ getRelatedBuyTrade(row)!.fee }}</el-descriptions-item>
+                  </el-descriptions>
+                </template>
+                <template v-else-if="row.related_order_id">
+                  <p class="expand-title">关联买入订单: <span class="order-id-text">{{ row.related_order_id }}</span>（不在当前页）</p>
+                </template>
+                <template v-else>
+                  <p class="expand-empty">无关联买入订单</p>
+                </template>
+              </div>
+
+              <div class="raw-order-header">
+                <p class="expand-title raw-order-title">原始订单信息 (JSON)</p>
+                <el-button
+                  size="small"
+                  text
+                  type="primary"
+                  :disabled="!row.raw_order_info"
+                  @click="copyRawOrderInfo(row.raw_order_info)"
+                >
+                  复制 JSON
+                </el-button>
+              </div>
+              <pre class="raw-order-json">{{ formatRawOrderInfo(row.raw_order_info) }}</pre>
             </div>
           </template>
         </el-table-column>
@@ -242,5 +288,32 @@ onMounted(() => {
 .expand-empty {
   font-size: 13px;
   color: #909399;
+}
+
+.raw-order-title {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.raw-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.raw-order-json {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #f5f7fa;
+  color: #303133;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>
