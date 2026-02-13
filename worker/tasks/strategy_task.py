@@ -189,7 +189,7 @@ def _persist_runtime_status(redis_client, strategy_id: int, status: Dict[str, An
         position_count=status.get("position_count"),
         buy_orders=status.get("buy_orders"),
         sell_orders=status.get("sell_orders"),
-        last_error=status.get("last_error"),
+        last_error=status.get("last_error") or "",
         extra_status=status.get("extra_status"),
     )
 
