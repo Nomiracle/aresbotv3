@@ -371,6 +371,7 @@ class TradingEngine:
             if sell_requests:
                 self.log.debug("批量下卖单 count=%s", len(sell_requests))
                 results = self.exchange.place_batch_orders(sell_requests)
+                latest_order_error: Optional[str] = None
                 with self._lock:
                     for idx, result in enumerate(results):
                         buy_order = sell_meta[idx]
@@ -391,7 +392,13 @@ class TradingEngine:
                             self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, placed_price, placed_qty)
                         else:
                             error_msg = result.error or "下单失败"
+                            latest_order_error = f"卖单下单失败: {error_msg}"
                             self.log.warning("卖单下单失败 buy_order=%s error=%s", buy_order.order_id, error_msg)
+
+                if latest_order_error is not None:
+                    self._last_error = latest_order_error
+                    self._last_error_time = time.time()
+                    self._update_status(force=True, source="sync_sell_order_failed")
 
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
@@ -770,6 +777,7 @@ class TradingEngine:
         if sell_requests:
             self.log.debug("批量补卖单 count=%s", len(sell_requests))
             results = self.exchange.place_batch_orders(sell_requests)
+            latest_repair_error: Optional[str] = None
             with self._lock:
                 for idx, result in enumerate(results):
                     pos = sell_meta[idx]
@@ -788,6 +796,21 @@ class TradingEngine:
                         )
                         self._pending_sells[result.order_id] = sell_order
                         self.log.info("补卖单已下: %s, 价格=%s, 数量=%s", result.order_id, placed_price, placed_qty)
+                    else:
+                        error_msg = result.error or "下单失败"
+                        latest_repair_error = f"补卖单下单失败: {error_msg}"
+                        self.log.warning(
+                            "补卖单下单失败 position_order=%s price=%s qty=%s error=%s",
+                            pos.order_id,
+                            sell_requests[idx].price,
+                            sell_requests[idx].quantity,
+                            error_msg,
+                        )
+
+            if latest_repair_error is not None:
+                self._last_error = latest_repair_error
+                self._last_error_time = time.time()
+                self._update_status(force=True, source="repair_sell_order_failed")
 
         excess_sells = self.position_syncer.get_excess_sells(pending_sells)
         if not excess_sells:
