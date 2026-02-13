@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, TYPE_CHECKING
+from typing import Any, List, Mapping, Optional, Sequence, TYPE_CHECKING
 from enum import Enum
 
 if TYPE_CHECKING:
     from worker.domain.order import Order
+    from worker.domain.position import PositionEntry
 
 
 class Signal(Enum):
@@ -69,6 +70,7 @@ class BaseStrategy(ABC):
         current_price: float,
         pending_buy_orders: Mapping[str, "Order"],
         pending_sell_orders: Mapping[str, "Order"],
+        positions: Sequence["PositionEntry"] = (),
     ) -> List[TradeDecision]:
         """批量生成买单决策，默认调用 should_buy 返回单个"""
         decision = self.should_buy(current_price, pending_buy_orders, pending_sell_orders)

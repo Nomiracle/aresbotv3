@@ -401,10 +401,12 @@ class TradingEngine:
             self.log.debug("跳过新开仓: %s", reason)
             return
 
+        positions = self.position_tracker.get_all_positions()
         decisions = self.strategy.should_buy_batch(
             current_price=self._current_price,
             pending_buy_orders=pending_buys,
             pending_sell_orders=pending_sells,
+            positions=positions,
         )
 
         if not decisions:

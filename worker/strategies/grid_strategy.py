@@ -1,9 +1,10 @@
-from typing import List, Mapping, Optional
+from typing import List, Mapping, Optional, Sequence
 import logging
 
 from worker.core.base_strategy import BaseStrategy, Signal, StrategyConfig, TradeDecision
 from worker.core.log_utils import PrefixAdapter
 from worker.domain.order import Order
+from worker.domain.position import PositionEntry
 
 
 class GridStrategy(BaseStrategy):
@@ -85,6 +86,7 @@ class GridStrategy(BaseStrategy):
         current_price: float,
         pending_buy_orders: Mapping[str, Order],
         pending_sell_orders: Mapping[str, Order],
+        positions: Sequence[PositionEntry] = (),
     ) -> List[TradeDecision]:
         """批量生成所有空闲网格槽位的买单决策"""
         active_buy_orders = len(pending_buy_orders)
@@ -105,10 +107,14 @@ class GridStrategy(BaseStrategy):
             for order in pending_sell_orders.values()
             if order.grid_index > 0
         }
+        # 持仓占用 grid 槽位（防止卖单失败后重复下买单）
+        used_position_indices = {
+            pos.grid_index for pos in positions if pos.grid_index > 0
+        }
 
         decisions: List[TradeDecision] = []
         for grid_index in range(1, self.config.order_grid + 1):
-            if grid_index in used_indices or grid_index in used_sell_indices:
+            if grid_index in used_indices or grid_index in used_sell_indices or grid_index in used_position_indices:
                 continue
             if total_orders + len(decisions) >= self.config.order_grid:
                 break
