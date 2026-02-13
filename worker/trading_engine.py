@@ -375,18 +375,20 @@ class TradingEngine:
                     for idx, result in enumerate(results):
                         buy_order = sell_meta[idx]
                         if result.success and result.order_id:
+                            placed_price = result.filled_price if result.filled_price is not None else sell_requests[idx].price
+                            placed_qty = result.filled_quantity if result.filled_quantity is not None else sell_requests[idx].quantity
                             sell_order = Order(
                                 order_id=result.order_id,
                                 symbol=self.strategy.config.symbol,
                                 side="sell",
-                                price=sell_requests[idx].price,
-                                quantity=sell_requests[idx].quantity,
+                                price=placed_price,
+                                quantity=placed_qty,
                                 grid_index=buy_order.grid_index,
                                 state=OrderState.PLACED,
                                 related_order_id=buy_order.order_id,
                             )
                             self._pending_sells[result.order_id] = sell_order
-                            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, sell_requests[idx].price, sell_requests[idx].quantity)
+                            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, placed_price, placed_qty)
                         else:
                             error_msg = result.error or "下单失败"
                             self.log.warning("卖单下单失败 buy_order=%s error=%s", buy_order.order_id, error_msg)
@@ -447,17 +449,19 @@ class TradingEngine:
             for idx, result in enumerate(results):
                 decision, aligned_price, aligned_qty = decision_map[idx]
                 if result.success and result.order_id:
+                    placed_price = result.filled_price if result.filled_price is not None else aligned_price
+                    placed_qty = result.filled_quantity if result.filled_quantity is not None else aligned_qty
                     order = Order(
                         order_id=result.order_id,
                         symbol=self.strategy.config.symbol,
                         side="buy",
-                        price=aligned_price,
-                        quantity=aligned_qty,
+                        price=placed_price,
+                        quantity=placed_qty,
                         grid_index=decision.grid_index,
                         state=OrderState.PLACED,
                     )
                     self._pending_buys[result.order_id] = order
-                    self.log.info("买单已下: %s, 价格=%s, 数量=%s, 网格=%s", result.order_id, aligned_price, aligned_qty, decision.grid_index)
+                    self.log.info("买单已下: %s, 价格=%s, 数量=%s, 网格=%s", result.order_id, placed_price, placed_qty, decision.grid_index)
                 else:
                     error_msg = result.error or "下单失败"
                     latest_order_error = f"买单下单失败: {error_msg}"
@@ -492,19 +496,21 @@ class TradingEngine:
 
         if results and results[0].success and results[0].order_id:
             result = results[0]
+            placed_price = result.filled_price if result.filled_price is not None else aligned_price
+            placed_qty = result.filled_quantity if result.filled_quantity is not None else aligned_qty
             order = Order(
                 order_id=result.order_id,
                 symbol=self.strategy.config.symbol,
                 side="sell",
-                price=aligned_price,
-                quantity=aligned_qty,
+                price=placed_price,
+                quantity=placed_qty,
                 grid_index=buy_order.grid_index,
                 state=OrderState.PLACED,
                 related_order_id=buy_order.order_id,
             )
             with self._lock:
                 self._pending_sells[result.order_id] = order
-            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, aligned_price, aligned_qty)
+            self.log.info("卖单已下: %s, 价格=%s, 数量=%s", result.order_id, placed_price, placed_qty)
             return order
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
@@ -768,18 +774,20 @@ class TradingEngine:
                 for idx, result in enumerate(results):
                     pos = sell_meta[idx]
                     if result.success and result.order_id:
+                        placed_price = result.filled_price if result.filled_price is not None else sell_requests[idx].price
+                        placed_qty = result.filled_quantity if result.filled_quantity is not None else sell_requests[idx].quantity
                         sell_order = Order(
                             order_id=result.order_id,
                             symbol=pos.symbol,
                             side="sell",
-                            price=sell_requests[idx].price,
-                            quantity=sell_requests[idx].quantity,
+                            price=placed_price,
+                            quantity=placed_qty,
                             grid_index=pos.grid_index,
                             state=OrderState.PLACED,
                             related_order_id=pos.order_id,
                         )
                         self._pending_sells[result.order_id] = sell_order
-                        self.log.info("补卖单已下: %s, 价格=%s", result.order_id, sell_requests[idx].price)
+                        self.log.info("补卖单已下: %s, 价格=%s, 数量=%s", result.order_id, placed_price, placed_qty)
 
         excess_sells = self.position_syncer.get_excess_sells(pending_sells)
         if not excess_sells:

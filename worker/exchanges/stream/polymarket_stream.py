@@ -115,6 +115,8 @@ class PolymarketStreamManager(StreamManager):
 
         # 缓存: symbol -> (price, timestamp)
         self._prices: Dict[str, tuple[float, float]] = {}
+        # 缓存: symbol -> (best_bid, best_ask, timestamp)
+        self._best_quotes: Dict[str, tuple[float, float, float]] = {}
         # 缓存: order_id -> ExchangeOrder
         self._orders: Dict[str, ExchangeOrder] = {}
         self._lock = threading.Lock()
@@ -162,6 +164,8 @@ class PolymarketStreamManager(StreamManager):
             was_present = symbol in self._subscribed_symbols
             self._subscribed_symbols.discard(symbol)
             self._symbol_display_map.pop(symbol, None)
+            self._prices.pop(symbol, None)
+            self._best_quotes.pop(symbol, None)
 
         if was_present and self._ws_market_connected:
             self._unsubscribe_market_tokens([symbol])
@@ -190,6 +194,24 @@ class PolymarketStreamManager(StreamManager):
                 if o.extra.get("token_id") == symbol
                 and o.status in (OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED)
             ]
+
+    def get_top_of_book(self, symbol: str) -> Optional[tuple[float, float]]:
+        with self._lock:
+            entry = self._best_quotes.get(symbol)
+            if entry is None:
+                return None
+            bid, ask, ts = entry
+            if time.time() - ts > PRICE_MAX_AGE_SECONDS:
+                return None
+            return bid, ask
+
+    def has_fresh_price_since(self, symbol: str, since_ts: float) -> bool:
+        with self._lock:
+            entry = self._prices.get(symbol)
+            if entry is None:
+                return False
+            _, updated_at = entry
+        return updated_at >= since_ts and (time.time() - updated_at) <= PRICE_MAX_AGE_SECONDS
 
     # ==================== 扩展方法 ====================
 
@@ -331,6 +353,10 @@ class PolymarketStreamManager(StreamManager):
 
             best_bid = _safe_float(change.get("best_bid"))
             best_ask = _safe_float(change.get("best_ask"))
+            now_ts = time.time()
+
+            with self._lock:
+                self._best_quotes[asset_id] = (best_bid, best_ask, now_ts)
 
             if best_bid > 0 and best_ask > 0:
                 mid_price = (best_bid + best_ask) / 2
@@ -344,7 +370,7 @@ class PolymarketStreamManager(StreamManager):
             if mid_price > 0:
                 self._stats_price_updates += 1
                 with self._lock:
-                    self._prices[asset_id] = (mid_price, time.time())
+                    self._prices[asset_id] = (mid_price, now_ts)
 
     def _on_market_error(self, ws: Any, error: Any) -> None:
         self._ws_market_connected = False

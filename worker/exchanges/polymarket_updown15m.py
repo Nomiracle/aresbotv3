@@ -39,6 +39,12 @@ _CHAIN_ID = 137
 _MARKET_PERIOD_SECONDS = 15 * 60
 _BALANCE_SCALE = 1_000_000
 _DEFAULT_MARKET_CLOSE_BUFFER = 180
+_POST_SWITCH_GUARD_SECONDS = 3.0
+_MAX_EFFECTIVE_TAKER_FEE_RATE = 0.016
+_SELL_FEE_GAP_TOLERANCE = 0.002
+_SELL_BALANCE_BUFFER = 0.0001
+_MIN_POLY_PRICE = 0.01
+_MAX_POLY_PRICE = 0.99
 
 
 class PolymarketUpDown15m(BaseExchange):
@@ -71,12 +77,13 @@ class PolymarketUpDown15m(BaseExchange):
         self._orders_cache: Dict[str, ExchangeOrder] = {}
         self._market_lock = threading.Lock()
         self._is_closing = False
+        self._last_market_switch_ts: float = 0.0
 
         self._trading_rules = TradingRules(
             tick_size=0.01,
             price_decimals=2,
-            step_size=1.0,
-            qty_decimals=0,
+            step_size=0.0001,
+            qty_decimals=4,
             min_notional=0,
         )
 
@@ -130,6 +137,7 @@ class PolymarketUpDown15m(BaseExchange):
             "market_end_time": self._market_end_time,
             "seconds_until_close": self._seconds_until_close(),
             "is_closing": self._is_closing,
+            "switch_guard_active": not self._is_switch_guard_passed(),
             "condition_id": self._condition_id,
             "ws_enabled": self._stream is not None,
         }
@@ -162,23 +170,30 @@ class PolymarketUpDown15m(BaseExchange):
                 OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing")
                 for _ in orders
             ]
+        if not self._is_switch_guard_passed():
+            return [
+                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market switched, waiting for fresh quotes")
+                for _ in orders
+            ]
 
         results: List[OrderResult] = []
         for order in orders:
             side = order.side.upper().strip()
-            price = order.price
-            quantity = order.quantity
+            requested_price = order.price
+            requested_quantity = order.quantity
 
             if side not in {"BUY", "SELL"}:
                 results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=f"unsupported side: {side}"))
                 continue
-            if price <= 0 or quantity <= 0:
+            if requested_price <= 0 or requested_quantity <= 0:
                 results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="price and quantity must be positive"))
                 continue
 
             try:
+                price = self._guard_maker_price(side=side, requested_price=requested_price)
+                quantity = requested_quantity
                 if side == "SELL":
-                    self._wait_for_token_balance(quantity)
+                    quantity = self._resolve_sell_quantity(requested_quantity=quantity)
                 resp = self._place_order(side, price, quantity)
                 order_id = resp.get("id") or resp.get("orderID") or resp.get("order_id")
                 if not order_id:
@@ -195,7 +210,15 @@ class PolymarketUpDown15m(BaseExchange):
                 with self._orders_lock:
                     self._orders_cache[exchange_order.order_id] = exchange_order
 
-                results.append(OrderResult(success=True, order_id=exchange_order.order_id, status=OrderStatus.PLACED))
+                results.append(
+                    OrderResult(
+                        success=True,
+                        order_id=exchange_order.order_id,
+                        status=OrderStatus.PLACED,
+                        filled_quantity=quantity,
+                        filled_price=price,
+                    )
+                )
             except Exception as e:
                 logger.warning("%s place order failed: %s", self.log_prefix, e)
                 results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=str(e)))
@@ -398,6 +421,7 @@ class PolymarketUpDown15m(BaseExchange):
             self._stream.set_display_symbol(new_token, self.symbol)
 
         self._stream.start(new_token)
+        self._last_market_switch_ts = time.time()
         logger.info("%s stream switched to token_id=%s", self.log_prefix, new_token[:16])
 
     def _ensure_market_valid(self) -> None:
@@ -433,6 +457,17 @@ class PolymarketUpDown15m(BaseExchange):
         if seconds_left <= 0:
             return False
         return seconds_left > max(3, self._market_close_buffer)
+
+    def _is_switch_guard_passed(self) -> bool:
+        """市场切换后短暂等待，避免沿用旧市场价格挂单。"""
+        if self._last_market_switch_ts <= 0:
+            return True
+        elapsed = time.time() - self._last_market_switch_ts
+        if elapsed >= _POST_SWITCH_GUARD_SECONDS:
+            return True
+        if not self._token_id or not isinstance(self._stream, PolymarketStreamManager):
+            return False
+        return self._stream.has_fresh_price_since(self._token_id, self._last_market_switch_ts)
 
     def _handle_market_closing(self) -> None:
         """市场即将关闭: 取消买单, 清算持仓, 切换到新市场."""
@@ -532,38 +567,146 @@ class PolymarketUpDown15m(BaseExchange):
 
     # ── 下单 ──────────────────────────────────────────────────────
 
-    def _wait_for_token_balance(self, required_quantity: float, max_wait: int = 30) -> float:
-        """等待 token 余额达到要求
+    def _guard_maker_price(self, side: str, requested_price: float) -> float:
+        """避免价格穿透盘口导致变成 taker。"""
+        adjusted_price = self.align_price(
+            self._clamp_price(requested_price),
+            self._trading_rules,
+        )
+        if not self._token_id or not isinstance(self._stream, PolymarketStreamManager):
+            return adjusted_price
 
-        Args:
-            required_quantity: 需要的 token 数量
-            max_wait: 最多等待时间（秒）
+        top_of_book = self._stream.get_top_of_book(self._token_id)
+        if top_of_book is None:
+            return adjusted_price
 
-        Returns:
-            当前余额
+        best_bid, best_ask = top_of_book
+        tick_size = self._trading_rules.tick_size
 
-        Raises:
-            ValueError: 超时后余额仍不足
-        """
+        if side == "BUY" and best_ask > 0 and adjusted_price >= best_ask:
+            adjusted_price = self.align_price(
+                self._clamp_price(best_ask - tick_size),
+                self._trading_rules,
+            )
+            if adjusted_price >= best_ask:
+                raise ValueError(
+                    f"buy price would cross best ask: requested={requested_price} best_ask={best_ask}"
+                )
+            logger.info(
+                "%s maker guard adjusted buy price %.4f -> %.4f (best_ask=%.4f)",
+                self.log_prefix,
+                requested_price,
+                adjusted_price,
+                best_ask,
+            )
+            return adjusted_price
+
+        if side == "SELL" and best_bid > 0 and adjusted_price <= best_bid:
+            adjusted_price = self.align_price(
+                self._clamp_price(best_bid + tick_size),
+                self._trading_rules,
+            )
+            if adjusted_price <= best_bid:
+                raise ValueError(
+                    f"sell price would cross best bid: requested={requested_price} best_bid={best_bid}"
+                )
+            logger.info(
+                "%s maker guard adjusted sell price %.4f -> %.4f (best_bid=%.4f)",
+                self.log_prefix,
+                requested_price,
+                adjusted_price,
+                best_bid,
+            )
+            return adjusted_price
+
+        return adjusted_price
+
+    def _resolve_sell_quantity(self, requested_quantity: float, max_wait: int = 30) -> float:
+        """卖单数量防失败：根据可用余额动态缩量。"""
         if not self._token_id:
             raise ValueError("token_id is not initialized")
 
         start = time.time()
-        balance = 0.0
+        last_balance = 0.0
 
         while time.time() - start < max_wait:
             balance = self._get_token_balance(self._token_id)
-            logger.debug(
-                "%s token balance: %.2f / %.2f required",
-                self.log_prefix, balance, required_quantity,
+            last_balance = balance
+            adjusted = self._adjust_sell_quantity_for_balance(
+                requested_quantity=requested_quantity,
+                available_balance=balance,
+                force=False,
             )
-            if balance >= required_quantity:
-                return balance
+            if adjusted is not None:
+                return adjusted
             time.sleep(1)
 
-        raise ValueError(
-            f"token balance insufficient: {balance:.2f}/{required_quantity:.2f} after {max_wait}s"
+        adjusted = self._adjust_sell_quantity_for_balance(
+            requested_quantity=requested_quantity,
+            available_balance=last_balance,
+            force=True,
         )
+        if adjusted is not None:
+            return adjusted
+
+        raise ValueError(
+            f"token balance insufficient: {last_balance:.4f}/{requested_quantity:.4f} after {max_wait}s"
+        )
+
+    def _adjust_sell_quantity_for_balance(
+        self,
+        requested_quantity: float,
+        available_balance: float,
+        force: bool,
+    ) -> Optional[float]:
+        if available_balance <= 0:
+            return None
+
+        if available_balance >= requested_quantity:
+            return self.align_quantity(requested_quantity, self._trading_rules)
+
+        gap = requested_quantity - available_balance
+        gap_ratio = gap / max(requested_quantity, 1e-9)
+        fee_gap_threshold = _MAX_EFFECTIVE_TAKER_FEE_RATE + _SELL_FEE_GAP_TOLERANCE
+        likely_fee = 0 < gap_ratio <= fee_gap_threshold
+
+        if not likely_fee and not force:
+            logger.debug(
+                "%s sell balance pending qty=%.4f balance=%.4f gap_ratio=%.4f",
+                self.log_prefix,
+                requested_quantity,
+                available_balance,
+                gap_ratio,
+            )
+            return None
+
+        safe_balance = max(0.0, available_balance - _SELL_BALANCE_BUFFER)
+        adjusted_quantity = self.align_quantity(safe_balance, self._trading_rules)
+        if adjusted_quantity <= 0:
+            adjusted_quantity = self.align_quantity(available_balance, self._trading_rules)
+        if adjusted_quantity <= 0:
+            return None
+
+        if likely_fee:
+            logger.info(
+                "%s sell qty adjusted for taker fee requested=%.4f balance=%.4f adjusted=%.4f gap_ratio=%.4f",
+                self.log_prefix,
+                requested_quantity,
+                available_balance,
+                adjusted_quantity,
+                gap_ratio,
+            )
+        else:
+            logger.warning(
+                "%s sell qty clamped to balance requested=%.4f balance=%.4f adjusted=%.4f gap_ratio=%.4f",
+                self.log_prefix,
+                requested_quantity,
+                available_balance,
+                adjusted_quantity,
+                gap_ratio,
+            )
+
+        return adjusted_quantity
 
     def _place_order(self, side: str, price: float, quantity: float) -> Dict[str, Any]:
         """下限价单."""
@@ -640,6 +783,10 @@ class PolymarketUpDown15m(BaseExchange):
         if filled > 0:
             return OrderStatus.PARTIALLY_FILLED
         return OrderStatus.PLACED
+
+    @staticmethod
+    def _clamp_price(price: float) -> float:
+        return min(max(price, _MIN_POLY_PRICE), _MAX_POLY_PRICE)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
