@@ -384,6 +384,7 @@ class TradingEngine:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
             self._last_error = f"同步订单失败: {e}"
             self._last_error_time = time.time()
+            self._update_status(force=True, source="sync_orders_failed")
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单（批量）"""
@@ -427,6 +428,7 @@ class TradingEngine:
 
         self.log.debug("批量下买单 count=%s", len(order_requests))
         results = self.exchange.place_batch_orders(order_requests)
+        latest_order_error: Optional[str] = None
 
         with self._lock:
             for idx, result in enumerate(results):
@@ -445,9 +447,13 @@ class TradingEngine:
                     self.log.info("买单已下: %s, 价格=%s, 数量=%s, 网格=%s", result.order_id, aligned_price, aligned_qty, decision.grid_index)
                 else:
                     error_msg = result.error or "下单失败"
-                    self._last_error = f"买单下单失败: {error_msg}"
-                    self._last_error_time = time.time()
-                    self.log.debug("买单下单失败 price=%s qty=%s error=%s", aligned_price, aligned_qty, error_msg)
+                    latest_order_error = f"买单下单失败: {error_msg}"
+                    self.log.warning("买单下单失败 price=%s qty=%s error=%s", aligned_price, aligned_qty, error_msg)
+
+        if latest_order_error is not None:
+            self._last_error = latest_order_error
+            self._last_error_time = time.time()
+            self._update_status(force=True, source="buy_order_failed")
 
     def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
@@ -491,7 +497,8 @@ class TradingEngine:
             error_msg = results[0].error if results and results[0].error else "下单失败"
             self._last_error = f"卖单下单失败: {error_msg}"
             self._last_error_time = time.time()
-            self.log.debug("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
+            self.log.warning("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
+            self._update_status(force=True, source="sell_order_failed")
             return None
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
