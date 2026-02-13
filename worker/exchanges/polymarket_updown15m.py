@@ -26,6 +26,8 @@ from worker.core.base_exchange import (
     OrderStatus,
     TradingRules,
 )
+from worker.exchanges.stream.base import StreamManager
+from worker.exchanges.stream.polymarket_stream import PolymarketStreamManager
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +94,13 @@ class PolymarketUpDown15m(BaseExchange):
         try:
             creds = self._client.create_or_derive_api_creds()
             self._client.set_api_creds(creds)
+            self._api_creds = creds
         except Exception as e:
             logger.warning("%s API credentials setup failed: %s", self.log_prefix, e)
+            self._api_creds = None
+
+        # 初始化 StreamManager
+        self._stream: Optional[StreamManager] = None
 
         # 获取初始市场
         self._refresh_market()
@@ -122,6 +129,7 @@ class PolymarketUpDown15m(BaseExchange):
             "seconds_until_close": self._seconds_until_close(),
             "is_closing": self._is_closing,
             "condition_id": self._condition_id,
+            "ws_enabled": self._stream is not None,
         }
 
     def get_ticker_price(self) -> float:
@@ -129,6 +137,13 @@ class PolymarketUpDown15m(BaseExchange):
         if not self._token_id:
             raise RuntimeError("token_id is not initialized")
 
+        # 缓存优先
+        if self._stream is not None:
+            price = self._stream.get_price(self._token_id)
+            if price is not None:
+                return price
+
+        # REST 兜底
         midpoint_data = self._client.get_midpoint(self._token_id)
         price = float(midpoint_data.get("mid", 0))
         if price <= 0:
@@ -202,6 +217,14 @@ class PolymarketUpDown15m(BaseExchange):
         return results
 
     def get_order(self, order_id: str) -> Optional[ExchangeOrder]:
+        # 缓存优先: 终态订单直接返回
+        if self._stream is not None:
+            cached = self._stream.get_order(order_id)
+            if cached is not None and cached.status in (
+                OrderStatus.FILLED, OrderStatus.CANCELLED,
+            ):
+                return cached
+
         self._ensure_market_valid()
         try:
             raw = self._client.get_order(order_id)
@@ -209,6 +232,10 @@ class PolymarketUpDown15m(BaseExchange):
                 return self._normalize_order(raw)
         except Exception:
             pass
+
+        # REST 失败时回退到缓存
+        if self._stream is not None:
+            return self._stream.get_order(order_id)
 
         with self._orders_lock:
             return self._orders_cache.get(order_id)
@@ -218,6 +245,13 @@ class PolymarketUpDown15m(BaseExchange):
         if not self._token_id:
             return []
 
+        # 缓存优先
+        if self._stream is not None:
+            orders = self._stream.get_open_orders(self._token_id)
+            if orders:
+                return orders
+
+        # REST 兜底
         try:
             raw_orders = self._client.get_orders()
         except Exception:
@@ -246,7 +280,12 @@ class PolymarketUpDown15m(BaseExchange):
         return result
 
     def close(self) -> None:
-        pass
+        if self._stream is not None:
+            if self._token_id:
+                self._stream.stop(self._token_id)
+            if isinstance(self._stream, PolymarketStreamManager):
+                PolymarketStreamManager.release(self._stream)
+            self._stream = None
 
     # ── 市场管理 ──────────────────────────────────────────────────
 
@@ -324,11 +363,38 @@ class PolymarketUpDown15m(BaseExchange):
             raise RuntimeError(f"failed to resolve market for {self.symbol} at timestamp {ts}")
 
         if token_id != self._token_id:
+            old_token = self._token_id
             logger.info(
                 "%s switched market token_id=%s slug=%s end_time=%s",
                 self.log_prefix, token_id, self._market_slug, self._market_end_time,
             )
+
+            # 更新 stream 订阅
+            self._switch_stream_subscription(old_token, token_id)
+
         self._token_id = token_id
+
+    def _switch_stream_subscription(self, old_token: Optional[str], new_token: str) -> None:
+        """切换 stream 订阅 (市场轮换时调用)"""
+        if self._stream is None:
+            # 首次: 通过 acquire 获取共享实例
+            self._stream = PolymarketStreamManager.acquire(
+                api_key=self.api_key,
+                api_secret=self.api_secret,
+                api_creds=self._api_creds,
+            )
+
+        # 取消旧 token 订阅
+        if old_token:
+            self._stream.stop(old_token)
+
+        # 订阅新 token
+        if isinstance(self._stream, PolymarketStreamManager):
+            self._stream.clear_orders_for_token(old_token or "")
+            self._stream.set_display_symbol(new_token, self.symbol)
+
+        self._stream.start(new_token)
+        logger.info("%s stream switched to token_id=%s", self.log_prefix, new_token[:16])
 
     def _ensure_market_valid(self) -> None:
         """确保当前市场有效, 如果即将关闭则处理切换."""
@@ -390,6 +456,7 @@ class PolymarketUpDown15m(BaseExchange):
                 self._token_id = new_token
                 with self._orders_lock:
                     self._orders_cache.clear()
+                self._switch_stream_subscription(old_token, new_token)
                 logger.info("%s switched to new market token_id=%s slug=%s", self.log_prefix, new_token, self._market_slug)
             elif not new_token:
                 # 刷新当前市场
