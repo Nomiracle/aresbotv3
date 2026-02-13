@@ -175,6 +175,8 @@ class PolymarketUpDown15m(BaseExchange):
                 continue
 
             try:
+                if side == "SELL":
+                    self._wait_for_token_balance(quantity)
                 resp = self._place_order(side, price, quantity)
                 order_id = resp.get("id") or resp.get("orderID") or resp.get("order_id")
                 if not order_id:
@@ -527,6 +529,39 @@ class PolymarketUpDown15m(BaseExchange):
             return 0.0
 
     # ── 下单 ──────────────────────────────────────────────────────
+
+    def _wait_for_token_balance(self, required_quantity: float, max_wait: int = 30) -> float:
+        """等待 token 余额达到要求
+
+        Args:
+            required_quantity: 需要的 token 数量
+            max_wait: 最多等待时间（秒）
+
+        Returns:
+            当前余额
+
+        Raises:
+            ValueError: 超时后余额仍不足
+        """
+        if not self._token_id:
+            raise ValueError("token_id is not initialized")
+
+        start = time.time()
+        balance = 0.0
+
+        while time.time() - start < max_wait:
+            balance = self._get_token_balance(self._token_id)
+            logger.debug(
+                "%s token balance: %.2f / %.2f required",
+                self.log_prefix, balance, required_quantity,
+            )
+            if balance >= required_quantity:
+                return balance
+            time.sleep(1)
+
+        raise ValueError(
+            f"token balance insufficient: {balance:.2f}/{required_quantity:.2f} after {max_wait}s"
+        )
 
     def _place_order(self, side: str, price: float, quantity: float) -> Dict[str, Any]:
         """下限价单."""
