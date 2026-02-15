@@ -161,7 +161,7 @@ class StrategyCRUD:
             select(Strategy)
             .options(selectinload(Strategy.account))
             .where(Strategy.user_email == user_email)
-            .order_by(Strategy.created_at.desc())
+            .order_by(Strategy.id.desc())
         )
         return result.scalars().all()
 

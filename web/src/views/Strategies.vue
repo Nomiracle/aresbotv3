@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
@@ -19,18 +19,32 @@ const currentStrategy = ref<Strategy | null>(null)
 const searchKeyword = ref('')
 const workers = ref<WorkerInfo[]>([])
 const refreshingWorkers = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const pageSizeOptions = [10, 20, 50, 100]
 
 // 内联编辑状态
 const editingCell = ref<{ rowId: number; field: string } | null>(null)
 
+const sortedStrategies = computed(() => (
+  [...strategies.value].sort((a, b) => b.id - a.id)
+))
+
 const filteredStrategies = computed(() => {
-  if (!searchKeyword.value) return strategies.value
-  const kw = searchKeyword.value.toLowerCase()
-  return strategies.value.filter(s =>
+  const kw = searchKeyword.value.trim().toLowerCase()
+  if (!kw) return sortedStrategies.value
+  return sortedStrategies.value.filter(s =>
     s.name.toLowerCase().includes(kw) ||
     s.symbol.toLowerCase().includes(kw) ||
     s.id.toString().includes(kw)
   )
+})
+
+const totalStrategies = computed(() => filteredStrategies.value.length)
+
+const paginatedStrategies = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredStrategies.value.slice(start, start + pageSize.value)
 })
 
 const workerOptions = computed<SelectOption[]>(() =>
@@ -118,11 +132,23 @@ function getRowClassName({ row }: { row: Strategy }): string {
   return isRunning(row.id) ? 'row-running' : ''
 }
 
+function handlePageChange(page: number) {
+  currentPage.value = page
+  selectedIds.value = []
+}
+
+function handlePageSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  selectedIds.value = []
+}
+
 // 数据获取
 async function fetchStrategies() {
   loading.value = true
   try {
     strategies.value = await strategyApi.getAll()
+    selectedIds.value = []
   } finally {
     loading.value = false
   }
@@ -138,6 +164,7 @@ async function fetchStatus(id: number) {
 }
 
 async function fetchAllStatus() {
+  statusMap.value = new Map()
   await Promise.all(strategies.value.map(s => fetchStatus(s.id)))
 }
 
@@ -182,7 +209,8 @@ async function handleDelete(row: Strategy) {
     await strategyApi.delete(row.id)
     ElMessage.success('删除成功')
     selectedIds.value = selectedIds.value.filter(id => id !== row.id)
-    fetchStrategies()
+    await fetchStrategies()
+    await fetchAllStatus()
   } catch {}
 }
 
@@ -195,7 +223,8 @@ async function handleSubmit(data: StrategyCreate) {
       await strategyApi.create(data)
       ElMessage.success('创建成功')
     }
-    fetchStrategies()
+    await fetchStrategies()
+    await fetchAllStatus()
   } catch {}
 }
 
@@ -219,7 +248,8 @@ async function handleCopy(row: Strategy) {
   try {
     await strategyApi.copy(row.id)
     ElMessage.success('复制成功')
-    fetchStrategies()
+    await fetchStrategies()
+    await fetchAllStatus()
   } catch {}
 }
 
@@ -248,9 +278,23 @@ async function handleBatchDelete() {
     const result = await strategyApi.batchDelete(selectedIds.value)
     ElMessage.success(`删除成功: ${result.success.length}, 失败: ${result.failed.length}`)
     selectedIds.value = []
-    fetchStrategies()
+    await fetchStrategies()
+    await fetchAllStatus()
   } catch {}
 }
+
+watch(searchKeyword, () => {
+  currentPage.value = 1
+  selectedIds.value = []
+})
+
+watch([totalStrategies, pageSize], ([total, size]) => {
+  const maxPage = Math.max(1, Math.ceil(total / size))
+  if (currentPage.value > maxPage) {
+    currentPage.value = maxPage
+    selectedIds.value = []
+  }
+})
 
 onMounted(() => {
   fetchStrategies()
@@ -288,7 +332,7 @@ onMounted(() => {
 
 	      <div style="overflow-x: auto;">
 	        <el-table
-	        :data="filteredStrategies"
+	        :data="paginatedStrategies"
 	        v-loading="loading"
 	        size="small"
 	        :height="'calc(100vh - 220px)'"
@@ -498,6 +542,19 @@ onMounted(() => {
         </el-table-column>
 	        </el-table>
 	      </div>
+
+        <div class="pagination-wrap">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :total="totalStrategies"
+            :page-sizes="pageSizeOptions"
+            layout="total, sizes, prev, pager, next, jumper"
+            background
+            @current-change="handlePageChange"
+            @size-change="handlePageSizeChange"
+          />
+        </div>
 	    </el-card>
 
     <StrategyForm v-model:visible="drawerVisible" :strategy="currentStrategy" @submit="handleSubmit" />
@@ -520,5 +577,11 @@ onMounted(() => {
 }
 :deep(.row-running:hover > td) {
   background-color: #e8f5e1 !important;
+}
+
+.pagination-wrap {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
