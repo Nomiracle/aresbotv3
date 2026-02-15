@@ -39,7 +39,8 @@ _CHAIN_ID = 137
 _MARKET_PERIOD_SECONDS = 15 * 60
 _BALANCE_SCALE = 1_000_000
 _DEFAULT_MARKET_CLOSE_BUFFER = 180
-_POST_SWITCH_GUARD_SECONDS = 3.0
+_PRE_SWITCH_GUARD_SECONDS = 10.0
+_POST_SWITCH_GUARD_SECONDS = 10.0
 _MAX_EFFECTIVE_TAKER_FEE_RATE = 0.016
 _SELL_FEE_GAP_TOLERANCE = 0.002
 _SELL_BALANCE_BUFFER = 0.0001
@@ -449,14 +450,14 @@ class PolymarketUpDown15m(BaseExchange):
     def _is_market_tradeable(self) -> bool:
         """市场是否允许继续挂单。
 
-        经验值：临近收盘最后几秒不再挂单，避免刚下就被切换流程取消。
+        切市场前 _PRE_SWITCH_GUARD_SECONDS 秒禁止下单，避免刚下就被切换流程取消。
         """
         if not self._market_end_time:
             return True
         seconds_left = self._seconds_until_close()
         if seconds_left <= 0:
             return False
-        return seconds_left > max(3, self._market_close_buffer)
+        return seconds_left > max(3, self._market_close_buffer + _PRE_SWITCH_GUARD_SECONDS)
 
     def _is_switch_guard_passed(self) -> bool:
         """市场切换后短暂等待，避免沿用旧市场价格挂单。"""
@@ -482,8 +483,8 @@ class PolymarketUpDown15m(BaseExchange):
                 self.log_prefix, self._token_id, self._seconds_until_close(),
             )
 
-            # 取消所有买单
-            self._cancel_buy_orders()
+            # 取消旧市场所有订单
+            self._cancel_all_market_orders()
 
             # 清算持仓
             self._liquidate_position()
@@ -503,6 +504,20 @@ class PolymarketUpDown15m(BaseExchange):
         finally:
             with self._market_lock:
                 self._is_closing = False
+
+    def _cancel_all_market_orders(self) -> None:
+        """使用 cancel_market_orders 取消旧市场的所有订单."""
+        if not self._token_id:
+            return
+        try:
+            resp = self._client.cancel_market_orders(asset_id=self._token_id)
+            canceled = resp.get("canceled", []) if isinstance(resp, dict) else []
+            logger.info(
+                "%s canceled all market orders token_id=%s canceled=%s",
+                self.log_prefix, self._token_id[:16], len(canceled),
+            )
+        except Exception as e:
+            logger.warning("%s cancel_market_orders failed: %s", self.log_prefix, e)
 
     def _cancel_buy_orders(self) -> None:
         """取消当前市场的所有买单."""
