@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Strategy, StrategyCreate, StrategyStatus } from '@/types'
+import type {
+  Strategy,
+  StrategyCreate,
+  StrategyStatus,
+  StrategyStatusFilter,
+} from '@/types'
 import { strategyApi } from '@/api/strategy'
 import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
 import { getExchangeOptionsFromCache } from '@/api/account'
@@ -17,11 +22,17 @@ const drawerVisible = ref(false)
 const selectedIds = ref<number[]>([])
 const currentStrategy = ref<Strategy | null>(null)
 const searchKeyword = ref('')
+const strategyStatusFilter = ref<StrategyStatusFilter>('active')
 const workers = ref<WorkerInfo[]>([])
 const refreshingWorkers = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const pageSizeOptions = [10, 20, 50, 100]
+const strategyStatusOptions: Array<{ label: string; value: StrategyStatusFilter }> = [
+  { label: '活跃策略', value: 'active' },
+  { label: '已删除策略', value: 'deleted' },
+  { label: '全部策略', value: 'all' },
+]
 
 // 内联编辑状态
 const editingCell = ref<{ rowId: number; field: string } | null>(null)
@@ -35,8 +46,7 @@ const filteredStrategies = computed(() => {
   if (!kw) return sortedStrategies.value
   return sortedStrategies.value.filter(s =>
     s.name.toLowerCase().includes(kw) ||
-    s.symbol.toLowerCase().includes(kw) ||
-    s.id.toString().includes(kw)
+    s.symbol.toLowerCase().includes(kw)
   )
 })
 
@@ -46,6 +56,8 @@ const paginatedStrategies = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredStrategies.value.slice(start, start + pageSize.value)
 })
+
+const serialOffset = computed(() => (currentPage.value - 1) * pageSize.value)
 
 const workerOptions = computed<SelectOption[]>(() =>
   workers.value.map((w, idx) => {
@@ -81,6 +93,10 @@ function isRunning(id: number): boolean {
   return statusMap.value.get(id)?.is_running ?? false
 }
 
+function isDeleted(strategy: Strategy): boolean {
+  return strategy.status === 'deleted'
+}
+
 function getExchangeLabel(exchangeId: string): string {
   const options = getExchangeOptionsFromCache()
   const match = options.find(o => o.value === exchangeId)
@@ -92,6 +108,11 @@ function isEditing(rowId: number, field: string): boolean {
 }
 
 function startEdit(rowId: number, field: string) {
+  const strategy = strategies.value.find(s => s.id === rowId)
+  if (strategy && isDeleted(strategy)) {
+    ElMessage.warning('已删除策略不支持编辑')
+    return
+  }
   if (isRunning(rowId)) {
     ElMessage.warning('运行中的策略不能内联编辑，请先停止')
     return
@@ -129,6 +150,9 @@ function cancelEdit() {
 }
 
 function getRowClassName({ row }: { row: Strategy }): string {
+  if (isDeleted(row)) {
+    return 'row-deleted'
+  }
   return isRunning(row.id) ? 'row-running' : ''
 }
 
@@ -147,7 +171,7 @@ function handlePageSizeChange(size: number) {
 async function fetchStrategies() {
   loading.value = true
   try {
-    strategies.value = await strategyApi.getAll()
+    strategies.value = await strategyApi.getAll(strategyStatusFilter.value)
     selectedIds.value = []
   } finally {
     loading.value = false
@@ -165,7 +189,8 @@ async function fetchStatus(id: number) {
 
 async function fetchAllStatus() {
   statusMap.value = new Map()
-  await Promise.all(strategies.value.map(s => fetchStatus(s.id)))
+  const activeStrategies = strategies.value.filter(s => !isDeleted(s))
+  await Promise.all(activeStrategies.map(s => fetchStatus(s.id)))
 }
 
 function loadWorkersFromCache() {
@@ -184,12 +209,14 @@ async function handleRefreshWorkers() {
   }
 }
 
-function getStatusType(id: number) {
-  return isRunning(id) ? 'success' : 'danger'
+function getStatusType(strategy: Strategy) {
+  if (isDeleted(strategy)) return 'info'
+  return isRunning(strategy.id) ? 'success' : 'danger'
 }
 
-function getStatusText(id: number) {
-  return isRunning(id) ? '运行中' : '已停止'
+function getStatusText(strategy: Strategy) {
+  if (isDeleted(strategy)) return '已删除'
+  return isRunning(strategy.id) ? '运行中' : '已停止'
 }
 
 // 操作
@@ -207,7 +234,7 @@ async function handleDelete(row: Strategy) {
   try {
     await ElMessageBox.confirm(`确定要删除策略 "${row.name}" 吗？`, '删除确认', { type: 'warning' })
     await strategyApi.delete(row.id)
-    ElMessage.success('删除成功')
+    ElMessage.success('已归档到已删除策略')
     selectedIds.value = selectedIds.value.filter(id => id !== row.id)
     await fetchStrategies()
     await fetchAllStatus()
@@ -254,6 +281,7 @@ async function handleCopy(row: Strategy) {
 }
 
 async function handleBatchStart() {
+  if (strategyStatusFilter.value !== 'active') return
   if (selectedIds.value.length === 0) return
   try {
     const result = await strategyApi.batchStart(selectedIds.value)
@@ -263,6 +291,7 @@ async function handleBatchStart() {
 }
 
 async function handleBatchStop() {
+  if (strategyStatusFilter.value !== 'active') return
   if (selectedIds.value.length === 0) return
   try {
     const result = await strategyApi.batchStop(selectedIds.value)
@@ -272,6 +301,7 @@ async function handleBatchStop() {
 }
 
 async function handleBatchDelete() {
+  if (strategyStatusFilter.value !== 'active') return
   if (selectedIds.value.length === 0) return
   try {
     await ElMessageBox.confirm(`确定要删除选中的 ${selectedIds.value.length} 个策略吗？`, '批量删除', { type: 'warning' })
@@ -286,6 +316,16 @@ async function handleBatchDelete() {
 watch(searchKeyword, () => {
   currentPage.value = 1
   selectedIds.value = []
+})
+
+watch(strategyStatusFilter, () => {
+  currentPage.value = 1
+  selectedIds.value = []
+  fetchStrategies()
+    .then(() => fetchAllStatus())
+    .catch(() => {
+      // 错误已由拦截器处理
+    })
 })
 
 watch([totalStrategies, pageSize], ([total, size]) => {
@@ -313,6 +353,14 @@ onMounted(() => {
       <el-row justify="space-between" align="middle">
         <h2>策略管理</h2>
         <el-space>
+          <el-select v-model="strategyStatusFilter" style="width: 140px">
+            <el-option
+              v-for="option in strategyStatusOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
           <el-input v-model="searchKeyword" placeholder="搜索策略" clearable style="width: 200px" />
           <el-button :loading="refreshingWorkers" @click="handleRefreshWorkers">刷新 Worker</el-button>
           <el-button type="primary" @click="handleAdd">新建</el-button>
@@ -323,9 +371,9 @@ onMounted(() => {
 	    <el-card>
 	      <div style="margin-bottom: 12px;">
 	        <el-space>
-	          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStart">批量启动</el-button>
-	          <el-button size="small" :disabled="selectedIds.length === 0" @click="handleBatchStop">批量停止</el-button>
-	          <el-button size="small" type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</el-button>
+	          <el-button size="small" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchStart">批量启动</el-button>
+	          <el-button size="small" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchStop">批量停止</el-button>
+	          <el-button size="small" type="danger" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchDelete">批量删除</el-button>
 	          <span style="color: #909399; font-size: 12px;">已选: {{ selectedIds.length }}</span>
 	        </el-space>
 	      </div>
@@ -343,14 +391,18 @@ onMounted(() => {
 	        @selection-change="(rows: Strategy[]) => selectedIds = rows.map(r => r.id)"
 	        >
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="id" label="ID" width="50" />
+        <el-table-column label="编号" width="70">
+          <template #default="{ $index }">
+            {{ serialOffset + $index + 1 }}
+          </template>
+        </el-table-column>
 
         <el-table-column label="名称" min-width="120">
           <template #default="{ row }">
             <EditableCell
               :value="row.name"
               :editing="isEditing(row.id, 'name')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               @start="startEdit(row.id, 'name')"
               @save="(v: any) => saveEdit(row.id, 'name', v)"
               @cancel="cancelEdit"
@@ -373,7 +425,7 @@ onMounted(() => {
             <EditableCell
               :value="row.symbol"
               :editing="isEditing(row.id, 'symbol')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               @start="startEdit(row.id, 'symbol')"
               @save="(v: any) => saveEdit(row.id, 'symbol', v)"
               @cancel="cancelEdit"
@@ -383,7 +435,7 @@ onMounted(() => {
 
         <el-table-column label="状态" min-width="70">
           <template #default="{ row }">
-            <el-tag :type="getStatusType(row.id)" size="small">{{ getStatusText(row.id) }}</el-tag>
+            <el-tag :type="getStatusType(row)" size="small">{{ getStatusText(row) }}</el-tag>
           </template>
         </el-table-column>
 
@@ -392,7 +444,7 @@ onMounted(() => {
             <EditableCell
               :value="row.base_order_size"
               :editing="isEditing(row.id, 'base_order_size')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               @start="startEdit(row.id, 'base_order_size')"
               @save="(v: any) => saveEdit(row.id, 'base_order_size', v)"
               @cancel="cancelEdit"
@@ -405,7 +457,7 @@ onMounted(() => {
             <EditableCell
               :value="row.buy_price_deviation"
               :editing="isEditing(row.id, 'buy_price_deviation')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               suffix="%"
               @start="startEdit(row.id, 'buy_price_deviation')"
               @save="(v: any) => saveEdit(row.id, 'buy_price_deviation', v)"
@@ -419,7 +471,7 @@ onMounted(() => {
             <EditableCell
               :value="row.sell_price_deviation"
               :editing="isEditing(row.id, 'sell_price_deviation')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               suffix="%"
               @start="startEdit(row.id, 'sell_price_deviation')"
               @save="(v: any) => saveEdit(row.id, 'sell_price_deviation', v)"
@@ -433,7 +485,7 @@ onMounted(() => {
             <EditableCell
               :value="row.grid_levels"
               :editing="isEditing(row.id, 'grid_levels')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               type="number"
               :min="1"
               :max="20"
@@ -449,7 +501,7 @@ onMounted(() => {
             <EditableCell
               :value="row.polling_interval"
               :editing="isEditing(row.id, 'polling_interval')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               suffix="s"
               @start="startEdit(row.id, 'polling_interval')"
               @save="(v: any) => saveEdit(row.id, 'polling_interval', v)"
@@ -463,7 +515,7 @@ onMounted(() => {
             <EditableCell
               :value="row.price_tolerance"
               :editing="isEditing(row.id, 'price_tolerance')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               suffix="%"
               @start="startEdit(row.id, 'price_tolerance')"
               @save="(v: any) => saveEdit(row.id, 'price_tolerance', v)"
@@ -477,7 +529,7 @@ onMounted(() => {
             <EditableCell
               :value="row.max_open_positions"
               :editing="isEditing(row.id, 'max_open_positions')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               type="number"
               :min="1"
               :max="100"
@@ -493,7 +545,7 @@ onMounted(() => {
             <EditableCell
               :value="row.stop_loss"
               :editing="isEditing(row.id, 'stop_loss')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               suffix="%"
               nullable
               @start="startEdit(row.id, 'stop_loss')"
@@ -508,7 +560,7 @@ onMounted(() => {
             <EditableCell
               :value="row.worker_name"
               :editing="isEditing(row.id, 'worker_name')"
-              :disabled="isRunning(row.id)"
+              :disabled="isRunning(row.id) || isDeleted(row)"
               type="select"
               :options="workerOptions"
               nullable
@@ -521,23 +573,26 @@ onMounted(() => {
 
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="!isRunning(row.id)"
-              type="success"
-              link
-              size="small"
-              @click="handleStart(row)"
-            >启动</el-button>
-            <el-button
-              v-else
-              type="warning"
-              link
-              size="small"
-              @click="handleStop(row)"
-            >停止</el-button>
-            <el-button link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button link size="small" @click="handleCopy(row)">复制</el-button>
-            <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            <template v-if="!isDeleted(row)">
+              <el-button
+                v-if="!isRunning(row.id)"
+                type="success"
+                link
+                size="small"
+                @click="handleStart(row)"
+              >启动</el-button>
+              <el-button
+                v-else
+                type="warning"
+                link
+                size="small"
+                @click="handleStop(row)"
+              >停止</el-button>
+              <el-button link size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button link size="small" @click="handleCopy(row)">复制</el-button>
+              <el-button type="danger" link size="small" @click="handleDelete(row)">删除</el-button>
+            </template>
+            <span v-else style="color: #909399;">-</span>
           </template>
         </el-table-column>
 	        </el-table>
@@ -577,6 +632,11 @@ onMounted(() => {
 }
 :deep(.row-running:hover > td) {
   background-color: #e8f5e1 !important;
+}
+
+:deep(.row-deleted) {
+  background-color: #f5f7fa !important;
+  color: #909399;
 }
 
 .pagination-wrap {

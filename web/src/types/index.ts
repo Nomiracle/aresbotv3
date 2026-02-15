@@ -1,3 +1,6 @@
+export type StrategyStatusFilter = 'active' | 'deleted' | 'all'
+export type StrategyRecordStatus = 'active' | 'deleted'
+
 export interface Account {
   id: number
   exchange: string
@@ -22,6 +25,7 @@ export interface Strategy {
   name: string
   symbol: string
   exchange: string
+  status: StrategyRecordStatus
   base_order_size: string
   buy_price_deviation: string
   sell_price_deviation: string

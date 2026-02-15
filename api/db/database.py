@@ -85,6 +85,48 @@ async def create_tables() -> None:
                 text("ALTER TABLE trade ADD COLUMN raw_order_info JSON NULL")
             )
 
+        strategy_status_column_result = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'strategy'
+                  AND COLUMN_NAME = 'status'
+                LIMIT 1
+                """
+            )
+        )
+        if strategy_status_column_result.scalar_one_or_none() is None:
+            await conn.execute(
+                text(
+                    "ALTER TABLE strategy "
+                    "ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'"
+                )
+            )
+
+        await conn.execute(
+            text(
+                "UPDATE strategy SET status = 'active' "
+                "WHERE status IS NULL OR status = ''"
+            )
+        )
+
+        strategy_status_index_result = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'strategy'
+                  AND INDEX_NAME = 'idx_status'
+                LIMIT 1
+                """
+            )
+        )
+        if strategy_status_index_result.scalar_one_or_none() is None:
+            await conn.execute(text("CREATE INDEX idx_status ON strategy (status)"))
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Get an async database session."""

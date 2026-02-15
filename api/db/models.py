@@ -7,6 +7,11 @@ from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel, Relationship
 
 
+class StrategyRecordStatus:
+    ACTIVE = "active"
+    DELETED = "deleted"
+
+
 class ExchangeAccount(SQLModel, table=True):
     """Exchange account configuration."""
 
@@ -56,6 +61,11 @@ class Strategy(SQLModel, table=True):
 
     # Worker settings
     worker_name: Optional[str] = Field(default=None, max_length=100)
+    status: str = Field(
+        default=StrategyRecordStatus.ACTIVE,
+        max_length=20,
+        index=True,
+    )
 
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

@@ -46,9 +46,11 @@ CREATE TABLE IF NOT EXISTS strategy (
     max_open_positions INT NOT NULL DEFAULT 10,
     max_daily_drawdown DECIMAL(20, 8) DEFAULT NULL,
     worker_name VARCHAR(100) DEFAULT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_email (user_email),
+    INDEX idx_status (status),
     INDEX idx_account_id (account_id),
     INDEX idx_symbol (symbol),
     FOREIGN KEY (account_id) REFERENCES exchange_account(id) ON DELETE CASCADE

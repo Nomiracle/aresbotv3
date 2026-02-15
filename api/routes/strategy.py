@@ -1,9 +1,9 @@
 """Strategy management routes."""
 import asyncio
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,7 @@ from api.deps import get_current_user, get_db_session
 from api.celery_client import get_active_workers, send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
 from api.db.crud import StrategyCRUD, AccountCRUD
-from api.db.models import Strategy
+from api.db.models import Strategy, StrategyRecordStatus
 
 router = APIRouter()
 
@@ -55,6 +55,7 @@ class StrategyResponse(BaseModel):
     name: str
     symbol: str
     exchange: str
+    status: str
     base_order_size: Decimal
     buy_price_deviation: Decimal
     sell_price_deviation: Decimal
@@ -141,6 +142,7 @@ def strategy_to_response(strategy: Strategy) -> StrategyResponse:
         name=strategy.name,
         symbol=strategy.symbol,
         exchange=exchange,
+        status=strategy.status,
         base_order_size=strategy.base_order_size,
         buy_price_deviation=strategy.buy_price_deviation,
         sell_price_deviation=strategy.sell_price_deviation,
@@ -267,10 +269,18 @@ def _ensure_no_duplicate_symbol(
 
 @router.get("", response_model=List[StrategyResponse])
 async def list_strategies(
+    status_filter: Literal["active", "deleted", "all"] = Query(
+        default=StrategyRecordStatus.ACTIVE,
+        alias="status",
+    ),
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    strategies = await StrategyCRUD.get_all(session, user_email)
+    strategies = await StrategyCRUD.get_all(
+        session,
+        user_email,
+        status_filter=status_filter,
+    )
     return [strategy_to_response(s) for s in strategies]
 
 
@@ -410,7 +420,7 @@ async def delete_strategy(
             detail="Cannot delete running strategy. Stop it first.",
         )
 
-    await StrategyCRUD.delete(session, strategy)
+    await StrategyCRUD.soft_delete(session, strategy)
 
 
 class StartStrategyRequest(BaseModel):
@@ -703,7 +713,7 @@ async def batch_delete_strategies(
             if not strategy or _is_strategy_running(sid):
                 failed.append(sid)
                 continue
-            await StrategyCRUD.delete(session, strategy)
+            await StrategyCRUD.soft_delete(session, strategy)
             success.append(sid)
         except Exception:
             failed.append(sid)

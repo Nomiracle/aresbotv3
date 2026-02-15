@@ -1,5 +1,11 @@
 import api from './index'
-import type { RunningStrategy, Strategy, StrategyCreate, StrategyStatus } from '@/types'
+import type {
+  RunningStrategy,
+  Strategy,
+  StrategyCreate,
+  StrategyStatus,
+  StrategyStatusFilter,
+} from '@/types'
 
 interface BatchResult {
   success: number[]
@@ -7,8 +13,10 @@ interface BatchResult {
 }
 
 export const strategyApi = {
-  getAll(): Promise<Strategy[]> {
-    return api.get('/strategies')
+  getAll(status: StrategyStatusFilter = 'active'): Promise<Strategy[]> {
+    return api.get('/strategies', {
+      params: { status },
+    })
   },
 
   getById(id: number): Promise<Strategy> {

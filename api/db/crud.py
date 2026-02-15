@@ -7,7 +7,13 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from .models import ExchangeAccount, Strategy, Trade, NotificationChannel
+from .models import (
+    ExchangeAccount,
+    Strategy,
+    StrategyRecordStatus,
+    Trade,
+    NotificationChannel,
+)
 
 
 class AccountCRUD:
@@ -129,16 +135,23 @@ class StrategyCRUD:
 
     @staticmethod
     async def get_by_id(
-        session: AsyncSession, strategy_id: int, user_email: str
+        session: AsyncSession,
+        strategy_id: int,
+        user_email: str,
+        include_deleted: bool = False,
     ) -> Optional[Strategy]:
         """Get strategy by ID for a specific user."""
+        filters = [
+            Strategy.id == strategy_id,
+            Strategy.user_email == user_email,
+        ]
+        if not include_deleted:
+            filters.append(Strategy.status == StrategyRecordStatus.ACTIVE)
+
         result = await session.execute(
             select(Strategy)
             .options(selectinload(Strategy.account))
-            .where(
-                Strategy.id == strategy_id,
-                Strategy.user_email == user_email,
-            )
+            .where(*filters)
         )
         return result.scalar_one_or_none()
 
@@ -154,22 +167,37 @@ class StrategyCRUD:
 
     @staticmethod
     async def get_all(
-        session: AsyncSession, user_email: str
+        session: AsyncSession,
+        user_email: str,
+        status_filter: str = StrategyRecordStatus.ACTIVE,
     ) -> Sequence[Strategy]:
         """Get all strategies for a user."""
-        result = await session.execute(
+        query = (
             select(Strategy)
             .options(selectinload(Strategy.account))
             .where(Strategy.user_email == user_email)
             .order_by(Strategy.id.desc())
         )
+
+        if status_filter == "all":
+            pass
+        elif status_filter == StrategyRecordStatus.ACTIVE:
+            query = query.where(Strategy.status == StrategyRecordStatus.ACTIVE)
+        elif status_filter == StrategyRecordStatus.DELETED:
+            query = query.where(Strategy.status == StrategyRecordStatus.DELETED)
+        else:
+            raise ValueError(f"Invalid strategy status filter: {status_filter}")
+
+        result = await session.execute(query)
         return result.scalars().all()
 
     @staticmethod
     async def get_all_active(session: AsyncSession) -> Sequence[Strategy]:
         """Get all strategies (for engine restart)."""
         result = await session.execute(
-            select(Strategy).order_by(Strategy.id)
+            select(Strategy)
+            .where(Strategy.status == StrategyRecordStatus.ACTIVE)
+            .order_by(Strategy.id)
         )
         return result.scalars().all()
 
@@ -192,6 +220,15 @@ class StrategyCRUD:
     async def delete(session: AsyncSession, strategy: Strategy) -> None:
         """Delete a strategy."""
         await session.delete(strategy)
+
+    @staticmethod
+    async def soft_delete(session: AsyncSession, strategy: Strategy) -> Strategy:
+        """Soft delete a strategy by marking status."""
+        strategy.status = StrategyRecordStatus.DELETED
+        strategy.updated_at = datetime.now()
+        await session.flush()
+        await session.refresh(strategy)
+        return strategy
 
 
 class TradeCRUD:
