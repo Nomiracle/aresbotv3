@@ -376,7 +376,12 @@ async def get_strategy(
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    strategy = await StrategyCRUD.get_by_id(session, strategy_id, user_email)
+    strategy = await StrategyCRUD.get_by_id(
+        session,
+        strategy_id,
+        user_email,
+        include_deleted=True,
+    )
     if not strategy:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Strategy not found")
     return strategy_to_response(strategy)

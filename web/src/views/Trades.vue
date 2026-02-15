@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Trade, Strategy } from '@/types'
 import { tradeApi } from '@/api/trade'
@@ -8,27 +8,22 @@ import { getExchangeOptionsFromCache } from '@/api/account'
 import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 
 const trades = ref<Trade[]>([])
-const strategies = ref<Strategy[]>([])
 const loading = ref(false)
 const total = ref(0)
 const pageSize = ref(20)
 const currentPage = ref(1)
-const selectedStrategy = ref<number | ''>('')
 const expandedRows = ref<number[]>([])
-
-async function fetchStrategies() {
-  strategies.value = await strategyApi.getAll()
-}
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const currentTrade = ref<Trade | null>(null)
+const currentStrategy = ref<Strategy | null>(null)
 
 async function fetchTrades() {
   loading.value = true
   try {
-    const params: { strategy_id?: number; limit: number; offset: number } = {
+    const params: { limit: number; offset: number } = {
       limit: pageSize.value,
       offset: (currentPage.value - 1) * pageSize.value,
-    }
-    if (selectedStrategy.value !== '') {
-      params.strategy_id = selectedStrategy.value
     }
     const result = await tradeApi.getAll(params)
     trades.value = result.items
@@ -52,18 +47,8 @@ function handleSizeChange(size: number) {
   fetchTrades()
 }
 
-function handleStrategyChange() {
-  currentPage.value = 1
-  fetchTrades()
-}
-
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleString('zh-CN')
-}
-
-function getStrategyName(id: number) {
-  const strategy = strategies.value.find(s => s.id === id)
-  return strategy?.name || '-'
 }
 
 function getExchangeLabel(exchangeId: string): string {
@@ -115,12 +100,34 @@ function handleExpandChange(_row: Trade, expandedRowsList: Trade[]) {
   expandedRows.value = expandedRowsList.map(r => r.id)
 }
 
-watch(selectedStrategy, () => {
-  handleStrategyChange()
-})
+async function openDetail(row: Trade) {
+  detailVisible.value = true
+  detailLoading.value = true
+  currentTrade.value = row
+  currentStrategy.value = null
+  try {
+    currentStrategy.value = await strategyApi.getById(row.strategy_id)
+  } catch {
+    currentStrategy.value = null
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function closeDetail() {
+  detailVisible.value = false
+  currentTrade.value = null
+  currentStrategy.value = null
+}
+
+function formatNullable(value: unknown): string {
+  if (value === null || value === undefined || value === '') {
+    return '-'
+  }
+  return String(value)
+}
 
 onMounted(() => {
-  fetchStrategies()
   fetchTrades()
 })
 </script>
@@ -130,19 +137,7 @@ onMounted(() => {
     <div class="page-header">
       <el-row justify="space-between" align="middle">
         <h2>交易记录</h2>
-        <el-select
-          v-model="selectedStrategy"
-          placeholder="全部策略"
-          clearable
-          style="width: 200px;"
-        >
-          <el-option
-            v-for="s in strategies"
-            :key="s.id"
-            :label="s.name"
-            :value="s.id"
-          />
-        </el-select>
+        <div />
       </el-row>
     </div>
 
@@ -202,9 +197,9 @@ onMounted(() => {
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column prop="strategy_id" label="策略" min-width="120">
+        <el-table-column prop="grid_index" label="网格索引" min-width="90">
           <template #default="{ row }">
-            {{ getStrategyName(row.strategy_id) }}
+            {{ formatNullable(row.grid_index) }}
           </template>
         </el-table-column>
         <el-table-column prop="order_id" label="订单ID" min-width="140">
@@ -241,6 +236,11 @@ onMounted(() => {
             <span v-else>-</span>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="openDetail(row)">详情</el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <el-pagination
@@ -254,6 +254,83 @@ onMounted(() => {
         @size-change="handleSizeChange"
       />
     </el-card>
+
+    <el-dialog
+      v-model="detailVisible"
+      title="交易详情"
+      width="900px"
+      destroy-on-close
+      @closed="closeDetail"
+    >
+      <el-skeleton v-if="detailLoading" :rows="8" animated />
+      <template v-else>
+        <el-descriptions v-if="currentTrade" title="交易记录字段" :column="2" border size="small">
+          <el-descriptions-item label="交易ID">{{ currentTrade.id }}</el-descriptions-item>
+          <el-descriptions-item label="策略ID">{{ currentTrade.strategy_id }}</el-descriptions-item>
+          <el-descriptions-item label="订单ID">{{ currentTrade.order_id }}</el-descriptions-item>
+          <el-descriptions-item label="关联订单ID">{{ formatNullable(currentTrade.related_order_id) }}</el-descriptions-item>
+          <el-descriptions-item label="交易所">{{ formatNullable(currentTrade.exchange) }}</el-descriptions-item>
+          <el-descriptions-item label="交易对">{{ currentTrade.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="方向">{{ currentTrade.side }}</el-descriptions-item>
+          <el-descriptions-item label="网格索引">{{ formatNullable(currentTrade.grid_index) }}</el-descriptions-item>
+          <el-descriptions-item label="价格">{{ currentTrade.price }}</el-descriptions-item>
+          <el-descriptions-item label="数量">{{ currentTrade.quantity }}</el-descriptions-item>
+          <el-descriptions-item label="金额">{{ currentTrade.amount }}</el-descriptions-item>
+          <el-descriptions-item label="手续费">{{ currentTrade.fee }}</el-descriptions-item>
+          <el-descriptions-item label="盈亏">{{ formatNullable(currentTrade.pnl) }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatTime(currentTrade.created_at) }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div class="detail-raw-header">
+          <div class="detail-subtitle">原始订单信息 (raw_order_info)</div>
+          <el-button
+            size="small"
+            text
+            type="primary"
+            :disabled="!currentTrade?.raw_order_info"
+            @click="copyRawOrderInfo(currentTrade?.raw_order_info ?? null)"
+          >
+            复制 JSON
+          </el-button>
+        </div>
+        <pre class="raw-order-json">{{ formatRawOrderInfo(currentTrade?.raw_order_info ?? null) }}</pre>
+
+        <el-descriptions
+          title="策略详情"
+          :column="2"
+          border
+          size="small"
+          style="margin-top: 16px;"
+        >
+          <template v-if="currentStrategy">
+            <el-descriptions-item label="策略ID">{{ currentStrategy.id }}</el-descriptions-item>
+            <el-descriptions-item label="状态">{{ currentStrategy.status }}</el-descriptions-item>
+            <el-descriptions-item label="策略名称">{{ currentStrategy.name }}</el-descriptions-item>
+            <el-descriptions-item label="账户ID">{{ currentStrategy.account_id }}</el-descriptions-item>
+            <el-descriptions-item label="交易所">{{ currentStrategy.exchange }}</el-descriptions-item>
+            <el-descriptions-item label="交易对">{{ currentStrategy.symbol }}</el-descriptions-item>
+            <el-descriptions-item label="基础订单量">{{ currentStrategy.base_order_size }}</el-descriptions-item>
+            <el-descriptions-item label="网格层数">{{ currentStrategy.grid_levels }}</el-descriptions-item>
+            <el-descriptions-item label="买入偏差">{{ currentStrategy.buy_price_deviation }}</el-descriptions-item>
+            <el-descriptions-item label="卖出偏差">{{ currentStrategy.sell_price_deviation }}</el-descriptions-item>
+            <el-descriptions-item label="轮询间隔">{{ currentStrategy.polling_interval }}</el-descriptions-item>
+            <el-descriptions-item label="价格容差">{{ currentStrategy.price_tolerance }}</el-descriptions-item>
+            <el-descriptions-item label="止损">{{ formatNullable(currentStrategy.stop_loss) }}</el-descriptions-item>
+            <el-descriptions-item label="止损延迟">{{ formatNullable(currentStrategy.stop_loss_delay) }}</el-descriptions-item>
+            <el-descriptions-item label="最大持仓">{{ currentStrategy.max_open_positions }}</el-descriptions-item>
+            <el-descriptions-item label="最大日回撤">{{ formatNullable(currentStrategy.max_daily_drawdown) }}</el-descriptions-item>
+            <el-descriptions-item label="Worker">{{ formatNullable(currentStrategy.worker_name) }}</el-descriptions-item>
+            <el-descriptions-item label="创建时间">{{ formatTime(currentStrategy.created_at) }}</el-descriptions-item>
+            <el-descriptions-item label="更新时间">{{ formatTime(currentStrategy.updated_at) }}</el-descriptions-item>
+          </template>
+          <template v-else>
+            <el-descriptions-item label="提示" :span="2">
+              策略详情不存在或已无权限访问
+            </el-descriptions-item>
+          </template>
+        </el-descriptions>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -315,5 +392,19 @@ onMounted(() => {
   font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.detail-subtitle {
+  font-size: 13px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.detail-raw-header {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>
