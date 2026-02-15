@@ -58,6 +58,8 @@ export interface StrategyCreate {
   worker_name?: string | null
 }
 
+export type StrategyUpdate = Partial<Omit<StrategyCreate, 'account_id'>>
+
 export interface OrderDetail {
   price: number
   quantity: number

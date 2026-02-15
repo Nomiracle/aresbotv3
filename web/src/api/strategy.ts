@@ -5,6 +5,7 @@ import type {
   StrategyCreate,
   StrategyStatus,
   StrategyStatusFilter,
+  StrategyUpdate,
 } from '@/types'
 
 interface BatchResult {
@@ -27,7 +28,7 @@ export const strategyApi = {
     return api.post('/strategies', data)
   },
 
-  update(id: number, data: Partial<StrategyCreate>): Promise<Strategy> {
+  update(id: number, data: StrategyUpdate): Promise<Strategy> {
     return api.put(`/strategies/${id}`, data)
   },
 

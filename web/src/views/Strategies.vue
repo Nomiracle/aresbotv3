@@ -6,6 +6,7 @@ import type {
   StrategyCreate,
   StrategyStatus,
   StrategyStatusFilter,
+  StrategyUpdate,
 } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
@@ -241,13 +242,13 @@ async function handleDelete(row: Strategy) {
   } catch {}
 }
 
-async function handleSubmit(data: StrategyCreate) {
+async function handleSubmit(data: StrategyCreate | StrategyUpdate) {
   try {
     if (currentStrategy.value) {
-      await strategyApi.update(currentStrategy.value.id, data)
+      await strategyApi.update(currentStrategy.value.id, data as StrategyUpdate)
       ElMessage.success('更新成功')
     } else {
-      await strategyApi.create(data)
+      await strategyApi.create(data as StrategyCreate)
       ElMessage.success('创建成功')
     }
     await fetchStrategies()

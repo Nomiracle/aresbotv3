@@ -2,7 +2,7 @@
 import { computed, ref, reactive, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import type { Strategy, StrategyCreate, Account } from '@/types'
+import type { Strategy, StrategyCreate, StrategyUpdate, Account } from '@/types'
 import { accountApi, type TradingFee } from '@/api/account'
 import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api/worker'
 
@@ -17,7 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
-  (e: 'submit', data: StrategyCreate): void
+  (e: 'submit', data: StrategyCreate | StrategyUpdate): void
 }>()
 
 const formRef = ref<FormInstance>()
@@ -274,7 +274,13 @@ function handleClose() {
 async function handleSubmit() {
   if (!formRef.value) return
   await formRef.value.validate()
-  emit('submit', { ...form } as StrategyCreate)
+  const payload = { ...form } as StrategyCreate
+  if (props.strategy) {
+    const { account_id: _accountId, ...updatePayload } = payload
+    emit('submit', updatePayload as StrategyUpdate)
+  } else {
+    emit('submit', payload)
+  }
   handleClose()
 }
 
@@ -293,7 +299,7 @@ onMounted(() => {
   >
     <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
       <el-form-item label="账户" prop="account_id">
-        <el-select v-model="form.account_id" style="width: 100%">
+        <el-select v-model="form.account_id" :disabled="Boolean(strategy)" style="width: 100%">
           <el-option
             v-for="acc in accounts"
             :key="acc.id"
@@ -301,6 +307,9 @@ onMounted(() => {
             :value="acc.id"
           />
         </el-select>
+        <div v-if="strategy" style="margin-top: 8px; font-size: 12px; color: #909399;">
+          编辑策略时不支持更换账户，如需更换请新建或复制策略后再调整。
+        </div>
       </el-form-item>
       <el-form-item label="策略名称" prop="name">
         <el-input v-model="form.name" placeholder="例如：BTC 网格策略" />
