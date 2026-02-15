@@ -388,6 +388,7 @@ class TradingEngine:
                 self.log.debug("批量下卖单 count=%s", len(sell_requests))
                 results = self.exchange.place_batch_orders(sell_requests)
                 latest_order_error: Optional[str] = None
+                all_suppressed = True
                 with self._lock:
                     for idx, result in enumerate(results):
                         buy_order = sell_meta[idx]
@@ -409,13 +410,16 @@ class TradingEngine:
                         else:
                             error_msg = result.error or "下单失败"
                             latest_order_error = f"卖单下单失败: {error_msg}"
+                            if not result.suppress_notify:
+                                all_suppressed = False
                             self.log.warning("卖单下单失败 buy_order=%s error=%s", buy_order.order_id, error_msg)
 
                 if latest_order_error is not None:
                     self._last_error = latest_order_error
                     self._last_error_time = time.time()
                     self._update_status(force=True, source="sync_sell_order_failed")
-                    self._emit_notify("order_failed", "卖单下单失败", latest_order_error)
+                    if not all_suppressed:
+                        self._emit_notify("order_failed", "卖单下单失败", latest_order_error)
 
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
@@ -468,6 +472,7 @@ class TradingEngine:
         self.log.debug("批量下买单 count=%s", len(order_requests))
         results = self.exchange.place_batch_orders(order_requests)
         latest_order_error: Optional[str] = None
+        all_suppressed = True
 
         with self._lock:
             for idx, result in enumerate(results):
@@ -489,13 +494,16 @@ class TradingEngine:
                 else:
                     error_msg = result.error or "下单失败"
                     latest_order_error = f"买单下单失败: {error_msg}"
+                    if not result.suppress_notify:
+                        all_suppressed = False
                     self.log.warning("买单下单失败 price=%s qty=%s error=%s", aligned_price, aligned_qty, error_msg)
 
         if latest_order_error is not None:
             self._last_error = latest_order_error
             self._last_error_time = time.time()
             self._update_status(force=True, source="buy_order_failed")
-            self._emit_notify("order_failed", "买单下单失败", latest_order_error)
+            if not all_suppressed:
+                self._emit_notify("order_failed", "买单下单失败", latest_order_error)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
@@ -539,11 +547,13 @@ class TradingEngine:
             return order
         else:
             error_msg = results[0].error if results and results[0].error else "下单失败"
+            suppress = results[0].suppress_notify if results else False
             self._last_error = f"卖单下单失败: {error_msg}"
             self._last_error_time = time.time()
             self.log.warning("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
             self._update_status(force=True, source="sell_order_failed")
-            self._emit_notify("order_failed", "卖单下单失败", f"买单: {buy_order.order_id}, 错误: {error_msg}")
+            if not suppress:
+                self._emit_notify("order_failed", "卖单下单失败", f"买单: {buy_order.order_id}, 错误: {error_msg}")
             return None
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:

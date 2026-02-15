@@ -168,12 +168,12 @@ class PolymarketUpDown15m(BaseExchange):
         self._ensure_market_valid()
         if not self._is_market_tradeable():
             return [
-                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing")
+                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing", suppress_notify=True)
                 for _ in orders
             ]
         if not self._is_switch_guard_passed():
             return [
-                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market switched, waiting for fresh quotes")
+                OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market switched, waiting for fresh quotes", suppress_notify=True)
                 for _ in orders
             ]
 

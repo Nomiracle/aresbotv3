@@ -42,6 +42,7 @@ class OrderResult:
     filled_quantity: Optional[float] = None
     remaining_quantity: Optional[float] = None
     error: Optional[str] = None
+    suppress_notify: bool = False
 
 
 @dataclass
