@@ -7,6 +7,7 @@ services:
       - ${WORKER_DATA_DIR:-/app/data/aresbotWorker}:/app/data/worker
       - ${WORKER_LOG_DIR:-/app/data/aresbotWorker/logs}:/app/logs
     environment:
+      - TZ=${CONTAINER_TZ:-Asia/Shanghai}
       - DB_HOST=${MASTER_HOST}
       - DB_PORT=${MASTER_MYSQL_PORT:-43306}
       - DB_USER=${MYSQL_USER:-aresbot}
@@ -31,4 +32,3 @@ services:
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
     restart: unless-stopped
-
