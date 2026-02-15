@@ -9,7 +9,7 @@ services:
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     ports:
-      - "${OAUTH2_PROXY_PORT:-44180}:4180"
+      - "127.0.0.1:${OAUTH2_PROXY_PORT:-44180}:4180"
     environment:
       # OAuth2 Provider 配置 (GitHub)
       - OAUTH2_PROXY_PROVIDER=github
@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: api/Dockerfile
     ports:
-      - "${API_PORT:-48000}:8000"
+      - "127.0.0.1:${API_PORT:-48000}:8000"
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
@@ -57,6 +57,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - API_INTERNAL_AUTH=${API_INTERNAL_AUTH}
     networks:
       - default
     depends_on:

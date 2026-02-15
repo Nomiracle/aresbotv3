@@ -1,9 +1,10 @@
 """FastAPI application factory."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from api.db.database import create_tables, close_db
+from api.deps import get_current_user
 
 
 @asynccontextmanager
@@ -25,12 +26,44 @@ def create_app() -> FastAPI:
 
     from .routes import account, strategy, trade, user, worker, notification
 
-    app.include_router(account.router, prefix="/api/accounts", tags=["accounts"])
-    app.include_router(strategy.router, prefix="/api/strategies", tags=["strategies"])
-    app.include_router(trade.router, prefix="/api/trades", tags=["trades"])
-    app.include_router(user.router, prefix="/api/user", tags=["user"])
-    app.include_router(worker.router, prefix="/api/workers", tags=["workers"])
-    app.include_router(notification.router, prefix="/api/notifications", tags=["notifications"])
+    auth_dependencies = [Depends(get_current_user)]
+
+    app.include_router(
+        account.router,
+        prefix="/api/accounts",
+        tags=["accounts"],
+        dependencies=auth_dependencies,
+    )
+    app.include_router(
+        strategy.router,
+        prefix="/api/strategies",
+        tags=["strategies"],
+        dependencies=auth_dependencies,
+    )
+    app.include_router(
+        trade.router,
+        prefix="/api/trades",
+        tags=["trades"],
+        dependencies=auth_dependencies,
+    )
+    app.include_router(
+        user.router,
+        prefix="/api/user",
+        tags=["user"],
+        dependencies=auth_dependencies,
+    )
+    app.include_router(
+        worker.router,
+        prefix="/api/workers",
+        tags=["workers"],
+        dependencies=auth_dependencies,
+    )
+    app.include_router(
+        notification.router,
+        prefix="/api/notifications",
+        tags=["notifications"],
+        dependencies=auth_dependencies,
+    )
 
     @app.get("/health")
     async def health_check():
