@@ -405,14 +405,16 @@ class CcxtStreamManager(StreamManager):
                     if price <= 0:
                         continue
 
+                    # 始终刷新时间戳，防止横盘时缓存过期触发 REST 回退
+                    with self._lock:
+                        self._prices[symbol] = (price, time.time())
+
                     prev = last_prices.get(symbol)
                     if prev is not None and abs(price - prev) < 1e-12:
                         continue
 
                     last_prices[symbol] = price
                     self._stats_price_updates += 1
-                    with self._lock:
-                        self._prices[symbol] = (price, time.time())
 
             except asyncio.CancelledError:
                 break
