@@ -231,6 +231,7 @@ const monitorCardStrategy = computed(() => {
     stop_loss_delay: item.stop_loss_delay,
     max_daily_drawdown: item.max_daily_drawdown,
     worker_name: item.worker_name,
+    strategy_type: item.strategy_type,
   }))
 })
 

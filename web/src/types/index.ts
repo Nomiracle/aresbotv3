@@ -101,6 +101,7 @@ export interface RunningStrategy {
   strategy_id: number
   task_id: string
   exchange?: string | null
+  strategy_type?: string
   strategy_name: string
   symbol: string
   base_order_size: string

@@ -123,6 +123,7 @@ class RunningStrategyResponse(BaseModel):
     worker_ip_location: str = ""
     worker_hostname: str
     exchange: Optional[str] = None
+    strategy_type: str = "grid"
     status: str
     current_price: float
     pending_buys: int
@@ -366,6 +367,7 @@ async def get_running_strategies(
             worker_ip_location=info.get("worker_ip_location", ""),
             worker_hostname=info["worker_hostname"],
             exchange=info.get("exchange"),
+            strategy_type=info.get("strategy_type", "grid"),
             status=info["status"],
             current_price=info["current_price"],
             pending_buys=info["pending_buys"],

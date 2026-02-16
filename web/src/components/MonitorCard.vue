@@ -21,6 +21,7 @@ interface MonitorCardStrategy {
   stop_loss_delay?: number | null
   max_daily_drawdown?: string | null
   worker_name?: string | null
+  strategy_type?: string
 }
 
 const props = defineProps<{
@@ -350,6 +351,7 @@ onUnmounted(() => {
         <span class="index">#{{ index }}</span>
         <span class="title-text">{{ strategy.name }}</span>
         <el-tag size="small" class="symbol-tag">{{ strategy.symbol }}</el-tag>
+        <el-tag v-if="strategy.strategy_type === 'bilateral_grid'" size="small" type="warning" class="symbol-tag">双边</el-tag>
         <span
           v-if="exchangeLabel && status?.exchange"
           class="exchange-badge"
