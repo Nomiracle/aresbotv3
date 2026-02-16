@@ -567,6 +567,7 @@ def _create_engine(
 
         if strategy_type == "bilateral_grid":
             strategy_impl = BilateralGridStrategy(trading_config, log_prefix=exchange.log_prefix)
+            exchange.ensure_hedge_mode()
         else:
             strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
 

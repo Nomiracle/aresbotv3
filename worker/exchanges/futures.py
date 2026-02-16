@@ -31,26 +31,55 @@ class ExchangeFutures(ExchangeSpot):
             exchange_id=normalized_exchange_id,
             testnet=testnet,
         )
-        self._ensure_hedge_mode()
 
     def get_exchange_info(self) -> Dict[str, str]:
         return {"id": self.exchange_id, "name": self.exchange_id, "type": "futures"}
 
-    def _ensure_hedge_mode(self) -> None:
+    def ensure_hedge_mode(self) -> None:
         """确保账户为双向持仓模式（hedge mode），bilateral 策略需要"""
         has = getattr(self._exchange, "has", {})
         if not has.get("setPositionMode"):
             return
+
+        def _try_set() -> bool:
+            """尝试设置双向持仓，成功或已是双向返回 True"""
+            try:
+                self._run_sync(lambda: self._exchange.set_position_mode(True))
+                logger.info("%s 已设置双向持仓模式", self._log_prefix)
+                return True
+            except Exception as err:
+                msg = str(err)
+                if "-4059" in msg or "No need to change" in msg:
+                    logger.debug("%s 已处于双向持仓模式", self._log_prefix)
+                    return True
+                return False
+
+        if _try_set():
+            return
+
+        # 首次失败（通常 -4068：存在挂单/持仓），取消当前 symbol 挂单后重试
+        logger.info("%s 切换双向持仓模式需先取消挂单，正在清理…", self._log_prefix)
         try:
-            self._run_sync(lambda: self._exchange.set_position_mode(True))
-            logger.info("%s 已设置双向持仓模式", self._log_prefix)
+            raw_orders = self._run_sync(
+                lambda: self._exchange.fetch_open_orders(self._market_symbol)
+            )
+            order_ids = [o["id"] for o in raw_orders if isinstance(o, dict) and o.get("id")]
+            if order_ids:
+                for oid in order_ids:
+                    try:
+                        self._run_sync(lambda _oid=oid: self._exchange.cancel_order(_oid, self._market_symbol))
+                    except Exception:
+                        pass
+                logger.info("%s 已取消 %s 笔挂单", self._log_prefix, len(order_ids))
         except Exception as err:
-            msg = str(err)
-            # "No need to change position side" 表示已经是双向模式
-            if "-4059" in msg or "No need to change" in msg:
-                logger.debug("%s 已处于双向持仓模式", self._log_prefix)
-            else:
-                logger.warning("%s 设置双向持仓模式失败: %s", self._log_prefix, err)
+            logger.warning("%s 清理挂单失败: %s", self._log_prefix, err)
+
+        if _try_set():
+            return
+
+        raise RuntimeError(
+            f"{self._log_prefix} 无法切换双向持仓模式，请手动在交易所关闭所有持仓和挂单后重试"
+        )
 
     def get_open_orders(self) -> List[ExchangeOrder]:
         """合约版 get_open_orders：WS 失败时自动降级到 REST"""
