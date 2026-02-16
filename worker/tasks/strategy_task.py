@@ -525,8 +525,17 @@ def _create_engine(
         max_position_count=strategy_config["max_open_positions"],
         max_daily_loss=float(strategy_config["max_daily_drawdown"]) if strategy_config.get("max_daily_drawdown") else None,
     )
+    strategy_type = str(strategy_config.get("strategy_type") or "grid").strip().lower()
 
     if exchange_name == "polymarket_updown15m":
+        if strategy_type == "bilateral_grid":
+            logger.warning(
+                "Strategy %s exchange=%s does not support strategy_type=%s; fallback to grid",
+                strategy_id,
+                exchange_name,
+                strategy_type,
+            )
+        strategy_type = "grid"
         try:
             from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
             from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
@@ -555,7 +564,6 @@ def _create_engine(
             testnet=account_data.get("testnet", False),
         )
 
-        strategy_type = strategy_config.get("strategy_type", "grid")
         if strategy_type == "bilateral_grid":
             strategy_impl = BilateralGridStrategy(trading_config, log_prefix=exchange.log_prefix)
         else:
