@@ -40,6 +40,7 @@ class Strategy(SQLModel, table=True):
     account_id: int = Field(foreign_key="exchange_account.id", index=True)
     name: str = Field(max_length=100)
     symbol: str = Field(max_length=20)
+    strategy_type: str = Field(default="grid", max_length=50)
 
     # Order settings
     base_order_size: Decimal = Field(max_digits=20, decimal_places=8)

@@ -12,6 +12,7 @@ from api.celery_client import get_active_workers, send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
 from api.db.crud import StrategyCRUD, AccountCRUD
 from api.db.models import Strategy, StrategyRecordStatus
+from worker.exchanges.futures import FUTURES_EXCHANGE_IDS
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ class StrategyCreate(BaseModel):
     account_id: int
     name: str
     symbol: str
+    strategy_type: str = "grid"
     base_order_size: Decimal
     buy_price_deviation: Decimal
     sell_price_deviation: Decimal
@@ -36,6 +38,7 @@ class StrategyCreate(BaseModel):
 class StrategyUpdate(BaseModel):
     name: Optional[str] = None
     symbol: Optional[str] = None
+    strategy_type: Optional[str] = None
     base_order_size: Optional[Decimal] = None
     buy_price_deviation: Optional[Decimal] = None
     sell_price_deviation: Optional[Decimal] = None
@@ -54,6 +57,7 @@ class StrategyResponse(BaseModel):
     account_id: int
     name: str
     symbol: str
+    strategy_type: str
     exchange: str
     status: str
     base_order_size: Decimal
@@ -141,6 +145,7 @@ def strategy_to_response(strategy: Strategy) -> StrategyResponse:
         account_id=strategy.account_id,
         name=strategy.name,
         symbol=strategy.symbol,
+        strategy_type=getattr(strategy, "strategy_type", "grid"),
         exchange=exchange,
         status=strategy.status,
         base_order_size=strategy.base_order_size,
@@ -294,12 +299,19 @@ async def create_strategy(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
+    if data.strategy_type == "bilateral_grid" and account.exchange.lower() not in FUTURES_EXCHANGE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="双边网格策略仅支持合约账户",
+        )
+
     strategy = await StrategyCRUD.create(
         session,
         user_email=user_email,
         account_id=data.account_id,
         name=data.name,
         symbol=data.symbol,
+        strategy_type=data.strategy_type,
         base_order_size=data.base_order_size,
         buy_price_deviation=data.buy_price_deviation,
         sell_price_deviation=data.sell_price_deviation,
@@ -467,6 +479,7 @@ async def start_strategy(
     # Prepare strategy config for Celery task
     strategy_config = {
         "symbol": strategy.symbol,
+        "strategy_type": getattr(strategy, "strategy_type", "grid"),
         "base_order_size": str(strategy.base_order_size),
         "buy_price_deviation": str(strategy.buy_price_deviation),
         "sell_price_deviation": str(strategy.sell_price_deviation),
@@ -488,6 +501,7 @@ async def start_strategy(
         "strategy_snapshot": {
             "strategy_name": strategy.name,
             "symbol": strategy.symbol,
+            "strategy_type": getattr(strategy, "strategy_type", "grid"),
             "base_order_size": str(strategy.base_order_size),
             "buy_price_deviation": str(strategy.buy_price_deviation),
             "sell_price_deviation": str(strategy.sell_price_deviation),
@@ -646,6 +660,7 @@ async def batch_start_strategies(
                 "strategy_snapshot": {
                     "strategy_name": strategy.name,
                     "symbol": strategy.symbol,
+                    "strategy_type": getattr(strategy, "strategy_type", "grid"),
                     "base_order_size": str(strategy.base_order_size),
                     "buy_price_deviation": str(strategy.buy_price_deviation),
                     "sell_price_deviation": str(strategy.sell_price_deviation),
@@ -742,6 +757,7 @@ async def copy_strategy(
         account_id=strategy.account_id,
         name=f"{strategy.name} (副本)",
         symbol=strategy.symbol,
+        strategy_type=getattr(strategy, "strategy_type", "grid"),
         base_order_size=strategy.base_order_size,
         buy_price_deviation=strategy.buy_price_deviation,
         sell_price_deviation=strategy.sell_price_deviation,

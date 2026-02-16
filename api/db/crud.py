@@ -109,6 +109,7 @@ class StrategyCRUD:
         max_open_positions: int = 10,
         max_daily_drawdown: Optional[Decimal] = None,
         worker_name: Optional[str] = None,
+        strategy_type: str = "grid",
     ) -> Strategy:
         """Create a new strategy."""
         strategy = Strategy(
@@ -116,6 +117,7 @@ class StrategyCRUD:
             account_id=account_id,
             name=name,
             symbol=symbol,
+            strategy_type=strategy_type,
             base_order_size=base_order_size,
             buy_price_deviation=buy_price_deviation,
             sell_price_deviation=sell_price_deviation,

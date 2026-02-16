@@ -21,9 +21,11 @@ from shared.utils.network import get_worker_network_identity
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
+from worker.bilateral_trading_engine import BilateralTradingEngine
 from worker.exchanges.futures import ExchangeFutures, FUTURES_EXCHANGE_IDS
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
+from worker.strategies.bilateral_grid_strategy import BilateralGridStrategy
 
 
 logger = get_logger("celery.task")
@@ -551,19 +553,33 @@ def _create_engine(
             exchange_id=exchange_name,
             testnet=account_data.get("testnet", False),
         )
-        strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
+
+        strategy_type = strategy_config.get("strategy_type", "grid")
+        if strategy_type == "bilateral_grid":
+            strategy_impl = BilateralGridStrategy(trading_config, log_prefix=exchange.log_prefix)
+        else:
+            strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
 
     risk_manager = RiskManager(risk_config)
     state_store = TradeStore(strategy_id)
 
     # Build engine
-    engine = TradingEngine(
-        strategy=strategy_impl,
-        exchange=exchange,
-        risk_manager=risk_manager,
-        state_store=state_store,
-        sync_interval=60,
-    )
+    if strategy_type == "bilateral_grid":
+        engine = BilateralTradingEngine(
+            strategy=strategy_impl,
+            exchange=exchange,
+            risk_manager=risk_manager,
+            state_store=state_store,
+            sync_interval=60,
+        )
+    else:
+        engine = TradingEngine(
+            strategy=strategy_impl,
+            exchange=exchange,
+            risk_manager=risk_manager,
+            state_store=state_store,
+            sync_interval=60,
+        )
 
     # Set up status update callback
     def on_status_update(status: Dict[str, Any]) -> None:

@@ -37,7 +37,11 @@ class ExchangeFutures(ExchangeSpot):
         normalized = super()._normalize_create_order(order)
         params: Dict[str, Any] = dict(normalized.get("params") or {})
 
-        if order.side.lower() == "sell":
+        # 合并 OrderRequest.params（positionSide、reduceOnly 等）
+        params.update(order.params)
+
+        # 仅在没有显式设置时，对 sell 单默认 reduceOnly（兼容单边策略）
+        if order.side.lower() == "sell" and "reduceOnly" not in params and "positionSide" not in params:
             params["reduceOnly"] = True
 
         normalized["params"] = params

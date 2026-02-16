@@ -22,6 +22,7 @@ class OrderRequest:
     side: str          # 'buy' | 'sell'
     price: float
     quantity: float
+    params: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

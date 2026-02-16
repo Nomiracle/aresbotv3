@@ -50,6 +50,7 @@ const defaultForm = {
   account_id: undefined as number | undefined,
   name: '',
   symbol: '',
+  strategy_type: 'grid',
   base_order_size: '0.01',
   buy_price_deviation: '0.5',
   sell_price_deviation: '1.0',
@@ -198,6 +199,7 @@ watch(() => props.visible, (val) => {
         account_id: props.strategy.account_id,
         name: props.strategy.name,
         symbol: props.strategy.symbol,
+        strategy_type: props.strategy.strategy_type || 'grid',
         base_order_size: props.strategy.base_order_size,
         buy_price_deviation: props.strategy.buy_price_deviation,
         sell_price_deviation: props.strategy.sell_price_deviation,
@@ -211,7 +213,7 @@ watch(() => props.visible, (val) => {
         worker_name: props.strategy.worker_name || null,
       })
     } else {
-      Object.assign(form, { ...defaultForm, account_id: undefined, worker_name: null })
+      Object.assign(form, { ...defaultForm, account_id: undefined, worker_name: null, strategy_type: 'grid' })
     }
 
     tradingFee.value = null
@@ -237,8 +239,13 @@ watch(
       return
     }
 
+    // 切换到非合约账户时重置策略类型
     if (oldAccountId !== undefined && oldAccountId !== newAccountId) {
       symbols.value = []
+      const acc = accounts.value.find(a => a.id === newAccountId)
+      if (acc && !FUTURES_EXCHANGES.has(acc.exchange?.toLowerCase() || '')) {
+        form.strategy_type = 'grid'
+      }
     }
 
     await fetchSymbols(newAccountId)
@@ -314,6 +321,18 @@ onMounted(() => {
       <el-form-item label="策略名称" prop="name">
         <el-input v-model="form.name" placeholder="例如：BTC 网格策略" />
       </el-form-item>
+      <el-form-item v-if="isFuturesAccount" label="策略类型">
+        <el-select v-model="form.strategy_type" :disabled="Boolean(strategy)" style="width: 100%">
+          <el-option label="单边网格" value="grid" />
+          <el-option label="双边网格" value="bilateral_grid" />
+        </el-select>
+        <div
+          v-if="form.strategy_type === 'bilateral_grid'"
+          style="margin-top: 8px; font-size: 12px; color: #e6a23c;"
+        >
+          双边网格需要在交易所开启对冲模式（Hedge Mode），请前往 Binance 合约设置中手动开启。
+        </div>
+      </el-form-item>
       <el-form-item label="交易对" prop="symbol">
         <el-select
           v-model="form.symbol"
@@ -330,7 +349,7 @@ onMounted(() => {
           />
         </el-select>
         <div
-          v-if="isFuturesAccount"
+          v-if="isFuturesAccount && form.strategy_type !== 'bilateral_grid'"
           style="margin-top: 8px; font-size: 12px; color: #e6a23c;"
         >
           合约账户建议使用单向持仓模式（One-way），卖单将按 reduceOnly 提交以避免误开反向仓位。
@@ -352,7 +371,7 @@ onMounted(() => {
       <el-form-item label="卖出偏差 %" prop="sell_price_deviation">
         <el-input v-model="form.sell_price_deviation" placeholder="1.0" />
       </el-form-item>
-      <el-form-item label="网格层数" prop="grid_levels">
+      <el-form-item :label="form.strategy_type === 'bilateral_grid' ? '网格层数（每边）' : '网格层数'" prop="grid_levels">
         <el-input-number v-model="form.grid_levels" :min="1" :max="20" />
       </el-form-item>
       <el-divider content-position="left">高级设置</el-divider>

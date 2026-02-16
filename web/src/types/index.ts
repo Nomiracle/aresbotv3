@@ -24,6 +24,7 @@ export interface Strategy {
   account_id: number
   name: string
   symbol: string
+  strategy_type: string
   exchange: string
   status: StrategyRecordStatus
   base_order_size: string
@@ -45,6 +46,7 @@ export interface StrategyCreate {
   account_id: number
   name: string
   symbol: string
+  strategy_type?: string
   base_order_size: string
   buy_price_deviation: string
   sell_price_deviation: string
