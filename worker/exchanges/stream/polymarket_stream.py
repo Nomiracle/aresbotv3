@@ -512,6 +512,18 @@ class PolymarketStreamManager(StreamManager):
     def _on_user_open(self, ws: Any) -> None:
         self._ws_user_connected = True
         logger.info("%s user WS connected", self._log_prefix)
+
+        # 重连时清除非终态订单缓存，避免脏数据阻止 REST 兜底
+        with self._lock:
+            stale = [
+                oid for oid, o in self._orders.items()
+                if o.status in (OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED)
+            ]
+            for oid in stale:
+                self._orders.pop(oid, None)
+        if stale:
+            logger.info("%s cleared %d stale open orders on reconnect", self._log_prefix, len(stale))
+
         if not self._api_creds:
             logger.warning("%s user WS: no api_creds, skip auth", self._log_prefix)
             return
