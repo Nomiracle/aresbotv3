@@ -24,15 +24,26 @@ const selectedIds = ref<number[]>([])
 const currentStrategy = ref<Strategy | null>(null)
 const searchKeyword = ref('')
 const strategyStatusFilter = ref<StrategyStatusFilter>('active')
+type StrategyRuntimeFilter = 'all' | 'running' | 'stopped' | 'deleted'
+const runtimeStatusFilter = ref<StrategyRuntimeFilter>('all')
 const workers = ref<WorkerInfo[]>([])
 const refreshingWorkers = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const pageSizeOptions = [10, 20, 50, 100]
+const WORKER_FILTER_ALL = '__all__'
+const WORKER_FILTER_AUTO = '__auto__'
+const workerFilter = ref<string>(WORKER_FILTER_ALL)
 const strategyStatusOptions: Array<{ label: string; value: StrategyStatusFilter }> = [
   { label: '活跃策略', value: 'active' },
   { label: '已删除策略', value: 'deleted' },
   { label: '全部策略', value: 'all' },
+]
+const runtimeStatusOptions: Array<{ label: string; value: StrategyRuntimeFilter }> = [
+  { label: '全部状态', value: 'all' },
+  { label: '运行中', value: 'running' },
+  { label: '已停止', value: 'stopped' },
+  { label: '已删除', value: 'deleted' },
 ]
 
 // 内联编辑状态
@@ -44,11 +55,15 @@ const sortedStrategies = computed(() => (
 
 const filteredStrategies = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
-  if (!kw) return sortedStrategies.value
-  return sortedStrategies.value.filter(s =>
-    s.name.toLowerCase().includes(kw) ||
-    s.symbol.toLowerCase().includes(kw)
-  )
+  return sortedStrategies.value.filter((strategy) => {
+    if (!matchesRuntimeStatusFilter(strategy)) return false
+    if (!matchesWorkerFilter(strategy)) return false
+    if (!kw) return true
+    return (
+      strategy.name.toLowerCase().includes(kw) ||
+      strategy.symbol.toLowerCase().includes(kw)
+    )
+  })
 })
 
 const totalStrategies = computed(() => filteredStrategies.value.length)
@@ -90,12 +105,61 @@ const workerOptions = computed<SelectOption[]>(() =>
   })
 )
 
+const workerFilterOptions = computed<SelectOption[]>(() => {
+  const options: SelectOption[] = [
+    { label: '全部 Worker', value: WORKER_FILTER_ALL },
+    { label: '自动分配', value: WORKER_FILTER_AUTO },
+  ]
+  const names = new Set<string>()
+  const labelMap = new Map<string, string>()
+
+  workerOptions.value.forEach((option) => {
+    names.add(option.value)
+    labelMap.set(option.value, option.label)
+  })
+
+  strategies.value.forEach((strategy) => {
+    const workerName = resolveWorkerName(strategy)
+    if (workerName) {
+      names.add(workerName)
+    }
+  })
+
+  const sortedNames = [...names].sort((a, b) => a.localeCompare(b))
+  sortedNames.forEach((name) => {
+    options.push({
+      label: labelMap.get(name) ?? name,
+      value: name,
+    })
+  })
+
+  return options
+})
+
 function isRunning(id: number): boolean {
   return statusMap.value.get(id)?.is_running ?? false
 }
 
 function isDeleted(strategy: Strategy): boolean {
   return strategy.status === 'deleted'
+}
+
+function resolveWorkerName(strategy: Strategy): string | null {
+  return statusMap.value.get(strategy.id)?.worker_name ?? strategy.worker_name ?? null
+}
+
+function matchesRuntimeStatusFilter(strategy: Strategy): boolean {
+  if (runtimeStatusFilter.value === 'all') return true
+  if (runtimeStatusFilter.value === 'deleted') return isDeleted(strategy)
+  if (isDeleted(strategy)) return false
+  return runtimeStatusFilter.value === 'running' ? isRunning(strategy.id) : !isRunning(strategy.id)
+}
+
+function matchesWorkerFilter(strategy: Strategy): boolean {
+  if (workerFilter.value === WORKER_FILTER_ALL) return true
+  const workerName = resolveWorkerName(strategy)
+  if (workerFilter.value === WORKER_FILTER_AUTO) return !workerName
+  return workerName === workerFilter.value
 }
 
 function getExchangeLabel(exchangeId: string): string {
@@ -314,7 +378,7 @@ async function handleBatchDelete() {
   } catch {}
 }
 
-watch(searchKeyword, () => {
+watch([searchKeyword, runtimeStatusFilter, workerFilter], () => {
   currentPage.value = 1
   selectedIds.value = []
 })
@@ -357,6 +421,22 @@ onMounted(() => {
           <el-select v-model="strategyStatusFilter" style="width: 140px">
             <el-option
               v-for="option in strategyStatusOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+          <el-select v-model="runtimeStatusFilter" style="width: 120px">
+            <el-option
+              v-for="option in runtimeStatusOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+          <el-select v-model="workerFilter" filterable style="width: 220px">
+            <el-option
+              v-for="option in workerFilterOptions"
               :key="option.value"
               :label="option.label"
               :value="option.value"
