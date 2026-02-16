@@ -339,11 +339,13 @@ class PolymarketStreamManager(StreamManager):
             self._process_market_data(data)
 
     def _process_market_data(self, data: Dict[str, Any]) -> None:
-        if data.get("event_type") != "price_change":
+        changes = self._extract_market_price_changes(data)
+        if not changes:
             return
 
-        for change in data.get("price_changes", []):
-            asset_id = change.get("asset_id")
+        for change in changes:
+            raw_asset_id = change.get("asset_id") or change.get("assetId")
+            asset_id = str(raw_asset_id or "").strip()
             if not asset_id:
                 continue
 
@@ -351,8 +353,12 @@ class PolymarketStreamManager(StreamManager):
                 if asset_id not in self._subscribed_symbols:
                     continue
 
-            best_bid = _safe_float(change.get("best_bid"))
-            best_ask = _safe_float(change.get("best_ask"))
+            best_bid = _safe_float(
+                change.get("best_bid") or change.get("bestBid") or change.get("bid")
+            )
+            best_ask = _safe_float(
+                change.get("best_ask") or change.get("bestAsk") or change.get("ask")
+            )
             now_ts = time.time()
 
             with self._lock:
@@ -365,12 +371,37 @@ class PolymarketStreamManager(StreamManager):
             elif best_ask > 0:
                 mid_price = best_ask
             else:
-                mid_price = _safe_float(change.get("price"))
+                mid_price = _safe_float(
+                    change.get("mid")
+                    or change.get("price")
+                    or change.get("last_price")
+                )
 
             if mid_price > 0:
                 self._stats_price_updates += 1
                 with self._lock:
                     self._prices[asset_id] = (mid_price, now_ts)
+
+    @staticmethod
+    def _extract_market_price_changes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        event_type = str(data.get("event_type") or "").strip().lower()
+        if event_type == "price_change":
+            price_changes = data.get("price_changes")
+            if isinstance(price_changes, list):
+                return [item for item in price_changes if isinstance(item, dict)]
+            return []
+
+        if isinstance(data.get("price_changes"), list):
+            return [
+                item
+                for item in data.get("price_changes", [])
+                if isinstance(item, dict)
+            ]
+
+        if "asset_id" in data or "assetId" in data:
+            return [data]
+
+        return []
 
     def _on_market_error(self, ws: Any, error: Any) -> None:
         self._ws_market_connected = False
