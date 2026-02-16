@@ -138,6 +138,9 @@ class PolymarketStreamManager(StreamManager):
         self._ws_market_connected = False
         self._ws_user_connected = False
         self._running = False
+        # ping 线程停止信号 (防止重连时 ping 线程泄漏)
+        self._ping_stop_market = threading.Event()
+        self._ping_stop_user = threading.Event()
 
         # 统计
         self._stats_price_updates = 0
@@ -237,6 +240,8 @@ class PolymarketStreamManager(StreamManager):
         """关闭所有 WS 连接"""
         logger.info("%s shutting down stream", self._log_prefix)
         self._running = False
+        self._ping_stop_market.set()
+        self._ping_stop_user.set()
         if self._ws_market:
             self._ws_market.close()
         if self._ws_user:
@@ -299,6 +304,7 @@ class PolymarketStreamManager(StreamManager):
     def _run_market_ws(self) -> None:
         delay = _RECONNECT_BASE_DELAY
         while self._running:
+            connected = False
             try:
                 self._ws_market = websocket.WebSocketApp(
                     _WS_MARKET_URL,
@@ -307,13 +313,15 @@ class PolymarketStreamManager(StreamManager):
                     on_close=self._on_market_close,
                     on_open=self._on_market_open,
                 )
-                self._ws_market.run_forever(reconnect=3)
-                delay = _RECONNECT_BASE_DELAY  # 正常断开重置退避
+                self._ws_market.run_forever()
+                connected = True
             except Exception as err:
                 self._log_error_throttled(
                     "market_ws_run", "market WS run error: %s", err,
                 )
             if self._running:
+                if connected:
+                    delay = _RECONNECT_BASE_DELAY
                 time.sleep(delay)
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
 
@@ -337,8 +345,13 @@ class PolymarketStreamManager(StreamManager):
             )
         # 重置首条未识别消息，便于重连后重新捕获
         self._first_unrecognized_msg = None
+        # 停止旧 ping 线程，启动新的
+        self._ping_stop_market.set()
+        self._ping_stop_market = threading.Event()
         threading.Thread(
-            target=self._ping_ws, args=(ws, "market"), daemon=True,
+            target=self._ping_ws,
+            args=(ws, "market", self._ping_stop_market),
+            daemon=True,
         ).start()
 
     def _on_market_message(self, ws: Any, message: str) -> None:
@@ -468,13 +481,14 @@ class PolymarketStreamManager(StreamManager):
 
     def _on_market_close(self, ws: Any, close_status_code: Any, close_msg: Any) -> None:
         self._ws_market_connected = False
-        logger.debug("%s market WS closed code=%s", self._log_prefix, close_status_code)
+        logger.info("%s market WS closed code=%s msg=%s", self._log_prefix, close_status_code, close_msg)
 
     # ==================== User WS (订单) ====================
 
     def _run_user_ws(self) -> None:
         delay = _RECONNECT_BASE_DELAY
         while self._running:
+            connected = False
             try:
                 self._ws_user = websocket.WebSocketApp(
                     _WS_USER_URL,
@@ -483,13 +497,15 @@ class PolymarketStreamManager(StreamManager):
                     on_close=self._on_user_close,
                     on_open=self._on_user_open,
                 )
-                self._ws_user.run_forever(reconnect=3)
-                delay = _RECONNECT_BASE_DELAY
+                self._ws_user.run_forever()
+                connected = True
             except Exception as err:
                 self._log_error_throttled(
                     "user_ws_run", "user WS run error: %s", err,
                 )
             if self._running:
+                if connected:
+                    delay = _RECONNECT_BASE_DELAY
                 time.sleep(delay)
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
 
@@ -511,9 +527,14 @@ class PolymarketStreamManager(StreamManager):
             "type": "user",
         }
         ws.send(json.dumps(msg))
-        logger.debug("%s user WS authenticated", self._log_prefix)
+        logger.info("%s user WS authenticated", self._log_prefix)
+        # 停止旧 ping 线程，启动新的
+        self._ping_stop_user.set()
+        self._ping_stop_user = threading.Event()
         threading.Thread(
-            target=self._ping_ws, args=(ws, "user"), daemon=True,
+            target=self._ping_ws,
+            args=(ws, "user", self._ping_stop_user),
+            daemon=True,
         ).start()
 
     def _on_user_message(self, ws: Any, message: str) -> None:
@@ -665,7 +686,7 @@ class PolymarketStreamManager(StreamManager):
 
     def _on_user_close(self, ws: Any, close_status_code: Any, close_msg: Any) -> None:
         self._ws_user_connected = False
-        logger.debug("%s user WS closed code=%s", self._log_prefix, close_status_code)
+        logger.info("%s user WS closed code=%s msg=%s", self._log_prefix, close_status_code, close_msg)
 
     # ==================== 工具方法 ====================
 
@@ -692,14 +713,14 @@ class PolymarketStreamManager(StreamManager):
             for oid, _ in completed[: len(completed) // 2]:
                 self._orders.pop(oid, None)
 
-    def _ping_ws(self, ws: Any, name: str) -> None:
+    def _ping_ws(self, ws: Any, name: str, stop_event: threading.Event) -> None:
         """手动发送文本 PING 保活 (Polymarket 需要文本 PING 而非协议级 ping)"""
-        while self._running:
+        while self._running and not stop_event.is_set():
             try:
                 ws.send("PING")
             except Exception:
                 break
-            time.sleep(_PING_INTERVAL)
+            stop_event.wait(timeout=_PING_INTERVAL)
 
     def _log_stats_loop(self) -> None:
         """定期输出缓存统计"""
