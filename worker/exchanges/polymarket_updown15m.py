@@ -46,6 +46,11 @@ _SELL_FEE_GAP_TOLERANCE = 0.002
 _SELL_BALANCE_BUFFER = 0.0001
 _MIN_POLY_PRICE = 0.01
 _MAX_POLY_PRICE = 0.99
+_TRANSIENT_ORDER_ERROR_MARKERS = (
+    "market is closing",
+    "market switched, waiting for fresh quotes",
+    "waiting for fresh quotes",
+)
 
 
 class PolymarketUpDown15m(BaseExchange):
@@ -165,7 +170,24 @@ class PolymarketUpDown15m(BaseExchange):
         if not orders:
             return []
 
-        self._ensure_market_valid()
+        try:
+            self._ensure_market_valid()
+        except Exception as err:
+            error_text = str(err)
+            suppress_notify = self._should_suppress_order_notify(error_text)
+            log_fn = logger.info if suppress_notify else logger.warning
+            log_fn("%s place orders precheck failed: %s", self.log_prefix, error_text)
+            return [
+                OrderResult(
+                    success=False,
+                    order_id=None,
+                    status=OrderStatus.FAILED,
+                    error=error_text,
+                    suppress_notify=suppress_notify,
+                )
+                for _ in orders
+            ]
+
         if not self._is_market_tradeable():
             return [
                 OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="market is closing", suppress_notify=True)
@@ -221,15 +243,42 @@ class PolymarketUpDown15m(BaseExchange):
                     )
                 )
             except Exception as e:
-                logger.warning("%s place order failed: %s", self.log_prefix, e)
-                results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=str(e)))
+                error_text = str(e)
+                suppress_notify = self._should_suppress_order_notify(error_text)
+                log_fn = logger.info if suppress_notify else logger.warning
+                log_fn("%s place order failed: %s", self.log_prefix, error_text)
+                results.append(
+                    OrderResult(
+                        success=False,
+                        order_id=None,
+                        status=OrderStatus.FAILED,
+                        error=error_text,
+                        suppress_notify=suppress_notify,
+                    )
+                )
 
         return results
 
     def cancel_batch_orders(self, order_ids: List[str]) -> List[OrderResult]:
         if not order_ids:
             return []
-        self._ensure_market_valid()
+        try:
+            self._ensure_market_valid()
+        except Exception as err:
+            error_text = str(err)
+            suppress_notify = self._should_suppress_order_notify(error_text)
+            log_fn = logger.info if suppress_notify else logger.warning
+            log_fn("%s cancel orders precheck failed: %s", self.log_prefix, error_text)
+            return [
+                OrderResult(
+                    success=False,
+                    order_id=order_id,
+                    status=OrderStatus.FAILED,
+                    error=error_text,
+                    suppress_notify=suppress_notify,
+                )
+                for order_id in order_ids
+            ]
 
         results: List[OrderResult] = []
         for order_id in order_ids:
@@ -446,6 +495,15 @@ class PolymarketUpDown15m(BaseExchange):
         if seconds_left <= 0:
             return True
         return self._market_close_buffer > 0 and seconds_left <= self._market_close_buffer
+
+    def _should_suppress_order_notify(self, error_message: str) -> bool:
+        if not self._is_market_tradeable():
+            return True
+        if not self._is_switch_guard_passed():
+            return True
+
+        normalized_error = (error_message or "").lower().strip()
+        return any(marker in normalized_error for marker in _TRANSIENT_ORDER_ERROR_MARKERS)
 
     def _is_market_tradeable(self) -> bool:
         """市场是否允许继续挂单。
