@@ -240,7 +240,7 @@ class PolymarketUpDown15m(BaseExchange):
             return [r for r in results if r is not None]
 
         try:
-            resp = self._post_orders_batch(batch_args)
+            resp = self._client.post_orders(batch_args)
             order_results = self._parse_batch_order_response(resp, batch_meta)
         except Exception as e:
             error_text = str(e)
@@ -419,22 +419,11 @@ class PolymarketUpDown15m(BaseExchange):
             raise ValueError(f"invalid outcome: {outcome}, expected 'Up' or 'Down'")
         return market_prefix, outcome
 
-    def _calculate_current_timestamp(self) -> int:
-        """计算当前15分钟周期的开始时间戳 (ET对齐)."""
+    def _aligned_timestamp(self, offset: int = 0) -> int:
+        """计算第 offset 个15分钟周期的开始时间戳 (ET对齐). 0=当前, 1=下一个."""
         now = datetime.now(_ET_TZ)
-        current_15min = (now.minute // 15) * 15
-        aligned = now.replace(minute=current_15min, second=0, microsecond=0)
-        return int(aligned.timestamp())
-
-    def _calculate_next_timestamp(self) -> int:
-        """计算下一个15分钟周期的开始时间戳 (ET对齐)."""
-        now = datetime.now(_ET_TZ)
-        next_15min = ((now.minute // 15) + 1) * 15
-        if next_15min >= 60:
-            aligned = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            aligned = now.replace(minute=next_15min, second=0, microsecond=0)
-        return int(aligned.timestamp())
+        base = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
+        return int((base + timedelta(minutes=15 * offset)).timestamp())
 
     def _get_market_token_by_timestamp(self, timestamp: int) -> Optional[str]:
         """通过slug查询gamma API获取市场token_id (参考v1实现)."""
@@ -461,7 +450,7 @@ class PolymarketUpDown15m(BaseExchange):
 
     def _get_next_market_token(self, max_retries: int = 6) -> Optional[str]:
         """获取下一个市场的token_id, 支持重试."""
-        next_ts = self._calculate_next_timestamp()
+        next_ts = self._aligned_timestamp(1)
         for attempt in range(max_retries):
             token_id = self._get_market_token_by_timestamp(next_ts)
             if token_id:
@@ -472,7 +461,7 @@ class PolymarketUpDown15m(BaseExchange):
 
     def _refresh_market(self) -> None:
         """刷新到当前或下一个市场."""
-        ts = self._calculate_current_timestamp()
+        ts = self._aligned_timestamp()
         token_id = self._get_market_token_by_timestamp(ts)
         if not token_id:
             token_id = self._get_next_market_token()
@@ -620,16 +609,6 @@ class PolymarketUpDown15m(BaseExchange):
             )
         except Exception as e:
             logger.warning("%s cancel_market_orders failed: %s", self.log_prefix, e)
-
-    def _cancel_buy_orders(self) -> None:
-        """取消当前市场的所有买单."""
-        try:
-            open_orders = self.get_open_orders()
-            buy_ids = [o.order_id for o in open_orders if o.side == "buy"]
-            if buy_ids:
-                self.cancel_batch_orders(buy_ids)
-        except Exception as e:
-            logger.warning("%s cancel buy orders failed: %s", self.log_prefix, e)
 
     def _liquidate_position(self) -> None:
         """以IOC市价单清算当前token持仓."""
@@ -841,10 +820,6 @@ class PolymarketUpDown15m(BaseExchange):
         )
         return self._client.create_order(order_args)
 
-    def _post_orders_batch(self, args: List[PostOrdersArgs]) -> Any:
-        """批量提交已签名的订单."""
-        return self._client.post_orders(args)
-
     @staticmethod
     def _parse_batch_order_response(
         resp: Any, batch_meta: List[tuple],
@@ -886,15 +861,6 @@ class PolymarketUpDown15m(BaseExchange):
                     status=OrderStatus.FAILED, error="missing response item",
                 ))
         return results
-
-    def _place_order(self, side: str, price: float, quantity: float) -> Dict[str, Any]:
-        """下单 (单笔, 用于清算等场景)."""
-        signed = self._create_signed_order(side, price, quantity)
-        resp = self._post_order(signed, OrderType.GTC)
-
-        if isinstance(resp, dict):
-            return resp
-        raise RuntimeError(f"unexpected order response: {resp}")
 
     def _post_order(self, signed_order: Any, order_type: OrderType) -> Any:
         """兼容不同 py-clob-client 版本的 post_order 签名."""
