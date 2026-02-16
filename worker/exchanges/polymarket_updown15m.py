@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import pytz
 import requests
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.clob_types import OpenOrderParams, OrderArgs, OrderType, PostOrdersArgs
 from py_clob_client.order_builder.constants import BUY, SELL
 
 from worker.core.base_exchange import (
@@ -199,17 +199,21 @@ class PolymarketUpDown15m(BaseExchange):
                 for _ in orders
             ]
 
-        results: List[OrderResult] = []
-        for order in orders:
+        results: List[OrderResult] = [None] * len(orders)
+        batch_args: List[PostOrdersArgs] = []
+        batch_indices: List[int] = []
+        batch_meta: List[tuple] = []  # (side, price, quantity)
+
+        for i, order in enumerate(orders):
             side = order.side.upper().strip()
             requested_price = order.price
             requested_quantity = order.quantity
 
             if side not in {"BUY", "SELL"}:
-                results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=f"unsupported side: {side}"))
+                results[i] = OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error=f"unsupported side: {side}")
                 continue
             if requested_price <= 0 or requested_quantity <= 0:
-                results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="price and quantity must be positive"))
+                results[i] = OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="price and quantity must be positive")
                 continue
 
             try:
@@ -217,13 +221,47 @@ class PolymarketUpDown15m(BaseExchange):
                 quantity = requested_quantity
                 if side == "SELL":
                     quantity = self._resolve_sell_quantity(requested_quantity=quantity)
-                resp = self._place_order(side, price, quantity)
-                order_id = resp.get("id") or resp.get("orderID") or resp.get("order_id")
-                if not order_id:
-                    raise RuntimeError(f"no order_id in response: {resp}")
+                signed = self._create_signed_order(side, price, quantity)
+                batch_args.append(PostOrdersArgs(order=signed, orderType=OrderType.GTC))
+                batch_indices.append(i)
+                batch_meta.append((side, price, quantity))
+            except Exception as e:
+                error_text = str(e)
+                suppress_notify = self._should_suppress_order_notify(error_text)
+                log_fn = logger.info if suppress_notify else logger.warning
+                log_fn("%s place order pre-sign failed: %s", self.log_prefix, error_text)
+                results[i] = OrderResult(
+                    success=False, order_id=None, status=OrderStatus.FAILED,
+                    error=error_text, suppress_notify=suppress_notify,
+                )
 
+        if not batch_args:
+            return [r for r in results if r is not None]
+
+        try:
+            resp = self._post_orders_batch(batch_args)
+            order_results = self._parse_batch_order_response(resp, batch_meta)
+        except Exception as e:
+            error_text = str(e)
+            suppress_notify = self._should_suppress_order_notify(error_text)
+            log_fn = logger.info if suppress_notify else logger.warning
+            log_fn("%s post_orders batch failed: %s", self.log_prefix, error_text)
+            order_results = [
+                OrderResult(
+                    success=False, order_id=None, status=OrderStatus.FAILED,
+                    error=error_text, suppress_notify=suppress_notify,
+                )
+            ] * len(batch_args)
+
+        for j, idx in enumerate(batch_indices):
+            result = order_results[j] if j < len(order_results) else OrderResult(
+                success=False, order_id=None, status=OrderStatus.FAILED, error="missing response",
+            )
+            results[idx] = result
+            if result.success and result.order_id:
+                side, price, quantity = batch_meta[j]
                 exchange_order = ExchangeOrder(
-                    order_id=str(order_id),
+                    order_id=result.order_id,
                     symbol=self.symbol,
                     side=side.lower(),
                     price=price,
@@ -233,31 +271,7 @@ class PolymarketUpDown15m(BaseExchange):
                 with self._orders_lock:
                     self._orders_cache[exchange_order.order_id] = exchange_order
 
-                results.append(
-                    OrderResult(
-                        success=True,
-                        order_id=exchange_order.order_id,
-                        status=OrderStatus.PLACED,
-                        filled_quantity=quantity,
-                        filled_price=price,
-                    )
-                )
-            except Exception as e:
-                error_text = str(e)
-                suppress_notify = self._should_suppress_order_notify(error_text)
-                log_fn = logger.info if suppress_notify else logger.warning
-                log_fn("%s place order failed: %s", self.log_prefix, error_text)
-                results.append(
-                    OrderResult(
-                        success=False,
-                        order_id=None,
-                        status=OrderStatus.FAILED,
-                        error=error_text,
-                        suppress_notify=suppress_notify,
-                    )
-                )
-
-        return results
+        return [r for r in results if r is not None]
 
     def cancel_batch_orders(self, order_ids: List[str]) -> List[OrderResult]:
         if not order_ids:
@@ -280,7 +294,30 @@ class PolymarketUpDown15m(BaseExchange):
                 for order_id in order_ids
             ]
 
-        results: List[OrderResult] = []
+        try:
+            resp = self._client.cancel_orders(order_ids)
+            canceled = set()
+            if isinstance(resp, dict):
+                canceled = set(resp.get("canceled", []) or [])
+            elif isinstance(resp, list):
+                canceled = set(resp)
+
+            results: List[OrderResult] = []
+            for order_id in order_ids:
+                if order_id in canceled or canceled == set():
+                    # 无法区分时默认成功
+                    with self._orders_lock:
+                        if order_id in self._orders_cache:
+                            self._orders_cache[order_id].status = OrderStatus.CANCELLED
+                    results.append(OrderResult(success=True, order_id=order_id, status=OrderStatus.CANCELLED))
+                else:
+                    results.append(OrderResult(success=False, order_id=order_id, status=OrderStatus.FAILED, error="not in canceled list"))
+            return results
+        except Exception as e:
+            logger.warning("%s cancel_orders batch failed: %s, falling back to single cancel", self.log_prefix, e)
+
+        # 批量失败时逐个取消
+        results = []
         for order_id in order_ids:
             try:
                 self._client.cancel(order_id)
@@ -330,7 +367,9 @@ class PolymarketUpDown15m(BaseExchange):
 
         # REST 兜底
         try:
-            raw_orders = self._client.get_orders()
+            raw_orders = self._client.get_orders(
+                params=OpenOrderParams(asset_id=self._token_id),
+            )
         except Exception:
             with self._orders_lock:
                 return [o for o in self._orders_cache.values() if o.status in {OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED}]
@@ -781,8 +820,8 @@ class PolymarketUpDown15m(BaseExchange):
 
         return adjusted_quantity
 
-    def _place_order(self, side: str, price: float, quantity: float) -> Dict[str, Any]:
-        """下限价单."""
+    def _create_signed_order(self, side: str, price: float, quantity: float) -> Any:
+        """创建并签名订单 (不提交)."""
         if not self._token_id:
             raise RuntimeError("token_id is not initialized")
         if not self._is_market_tradeable():
@@ -795,7 +834,57 @@ class PolymarketUpDown15m(BaseExchange):
             side=clob_side,
             token_id=self._token_id,
         )
-        signed = self._client.create_order(order_args)
+        return self._client.create_order(order_args)
+
+    def _post_orders_batch(self, args: List[PostOrdersArgs]) -> Any:
+        """批量提交已签名的订单."""
+        return self._client.post_orders(args)
+
+    @staticmethod
+    def _parse_batch_order_response(
+        resp: Any, batch_meta: List[tuple],
+    ) -> List[OrderResult]:
+        """解析 post_orders 批量响应."""
+        # 响应可能是 list[dict] 或 dict
+        if isinstance(resp, list):
+            items = resp
+        elif isinstance(resp, dict):
+            items = resp.get("orders") or resp.get("results") or [resp]
+        else:
+            items = []
+
+        results: List[OrderResult] = []
+        for j in range(len(batch_meta)):
+            if j < len(items) and isinstance(items[j], dict):
+                item = items[j]
+                order_id = str(
+                    item.get("id") or item.get("orderID") or item.get("order_id") or ""
+                )
+                if order_id:
+                    side, price, quantity = batch_meta[j]
+                    results.append(OrderResult(
+                        success=True,
+                        order_id=order_id,
+                        status=OrderStatus.PLACED,
+                        filled_quantity=quantity,
+                        filled_price=price,
+                    ))
+                else:
+                    error = item.get("error") or item.get("message") or f"no order_id: {item}"
+                    results.append(OrderResult(
+                        success=False, order_id=None,
+                        status=OrderStatus.FAILED, error=str(error),
+                    ))
+            else:
+                results.append(OrderResult(
+                    success=False, order_id=None,
+                    status=OrderStatus.FAILED, error="missing response item",
+                ))
+        return results
+
+    def _place_order(self, side: str, price: float, quantity: float) -> Dict[str, Any]:
+        """下单 (单笔, 用于清算等场景)."""
+        signed = self._create_signed_order(side, price, quantity)
         resp = self._post_order(signed, OrderType.GTC)
 
         if isinstance(resp, dict):
