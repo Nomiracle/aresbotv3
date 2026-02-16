@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Trade, Strategy } from '@/types'
 import { tradeApi } from '@/api/trade'
@@ -18,19 +18,72 @@ const detailLoading = ref(false)
 const currentTrade = ref<Trade | null>(null)
 const currentStrategy = ref<Strategy | null>(null)
 
+const strategyPickerVisible = ref(false)
+const strategies = ref<Strategy[]>([])
+const strategiesLoading = ref(false)
+const strategyKeyword = ref('')
+const selectedStrategyId = ref<number | null>(null)
+const highlightStrategyId = ref<number | null>(null)
+
+const RECENT_STRATEGY_IDS_KEY = 'aresbot.trades.recentStrategyIds.v1'
+const recentStrategyIds = ref<number[]>(loadRecentStrategyIds())
+
+const selectedStrategy = computed(() => (
+  selectedStrategyId.value
+    ? strategies.value.find(s => s.id === selectedStrategyId.value) ?? null
+    : null
+))
+
+const highlightStrategy = computed(() => (
+  highlightStrategyId.value
+    ? strategies.value.find(s => s.id === highlightStrategyId.value) ?? null
+    : null
+))
+
+const filteredStrategies = computed(() => {
+  const kw = strategyKeyword.value.trim().toLowerCase()
+  const list = [...strategies.value].sort((a, b) => b.id - a.id)
+  if (!kw) return list
+  return list.filter(s =>
+    s.name.toLowerCase().includes(kw) ||
+    s.symbol.toLowerCase().includes(kw) ||
+    String(s.id).includes(kw)
+  )
+})
+
+const recentFilteredStrategies = computed(() => {
+  if (strategyKeyword.value.trim()) return []
+  const recentSet = new Set(recentStrategyIds.value)
+  const recent = filteredStrategies.value.filter(s => recentSet.has(s.id))
+  // recentStrategyIds 已经是“新→旧”，这里按该顺序展示
+  const byId = new Map(recent.map(s => [s.id, s]))
+  return recentStrategyIds.value.map(id => byId.get(id)).filter(Boolean) as Strategy[]
+})
+
+const otherFilteredStrategies = computed(() => {
+  const recentSet = new Set(recentStrategyIds.value)
+  if (strategyKeyword.value.trim()) return filteredStrategies.value
+  return filteredStrategies.value.filter(s => !recentSet.has(s.id))
+})
+
 async function fetchTrades() {
   loading.value = true
   try {
-    const params: { limit: number; offset: number } = {
+    const params: { limit: number; offset: number; strategy_id?: number } = {
       limit: pageSize.value,
       offset: (currentPage.value - 1) * pageSize.value,
+    }
+    if (selectedStrategyId.value) {
+      params.strategy_id = selectedStrategyId.value
     }
     const result = await tradeApi.getAll(params)
     trades.value = result.items
     total.value = result.total
+    expandedRows.value = []
   } catch {
     trades.value = []
     total.value = 0
+    expandedRows.value = []
   } finally {
     loading.value = false
   }
@@ -55,6 +108,70 @@ function getExchangeLabel(exchangeId: string): string {
   const options = getExchangeOptionsFromCache()
   const match = options.find(o => o.value === exchangeId)
   return match?.label ?? exchangeId
+}
+
+function loadRecentStrategyIds(): number[] {
+  try {
+    const raw = localStorage.getItem(RECENT_STRATEGY_IDS_KEY)
+    if (!raw) return []
+    const ids = JSON.parse(raw) as unknown
+    if (!Array.isArray(ids)) return []
+    return ids.map(v => Number(v)).filter(v => Number.isFinite(v) && v > 0).slice(0, 8)
+  } catch {
+    return []
+  }
+}
+
+function persistRecentStrategyIds() {
+  try {
+    localStorage.setItem(RECENT_STRATEGY_IDS_KEY, JSON.stringify(recentStrategyIds.value.slice(0, 8)))
+  } catch {
+    // 忽略
+  }
+}
+
+function bumpRecentStrategy(id: number) {
+  const next = [id, ...recentStrategyIds.value.filter(x => x !== id)].slice(0, 8)
+  recentStrategyIds.value = next
+  persistRecentStrategyIds()
+}
+
+async function ensureStrategiesLoaded() {
+  if (strategiesLoading.value || strategies.value.length) return
+  strategiesLoading.value = true
+  try {
+    strategies.value = await strategyApi.getAll('all')
+  } catch {
+    strategies.value = []
+  } finally {
+    strategiesLoading.value = false
+  }
+}
+
+function openStrategyPicker() {
+  strategyPickerVisible.value = true
+}
+
+function clearStrategyFilter() {
+  selectedStrategyId.value = null
+  currentPage.value = 1
+  fetchTrades()
+}
+
+function clearStrategyFilterAndClose() {
+  clearStrategyFilter()
+  strategyPickerVisible.value = false
+  highlightStrategyId.value = null
+  strategyKeyword.value = ''
+}
+
+function applyStrategyFilter() {
+  if (!highlightStrategyId.value) return
+  selectedStrategyId.value = highlightStrategyId.value
+  bumpRecentStrategy(highlightStrategyId.value)
+  strategyPickerVisible.value = false
+  currentPage.value = 1
+  fetchTrades()
 }
 
 function getRelatedBuyTrade(sellTrade: Trade): Trade | null {
@@ -130,6 +247,17 @@ function formatNullable(value: unknown): string {
 onMounted(() => {
   fetchTrades()
 })
+
+watch(strategyPickerVisible, async visible => {
+  if (!visible) return
+  await ensureStrategiesLoaded()
+  strategyKeyword.value = ''
+  // 打开弹窗时，默认高亮当前已选策略（或列表第一个）
+  highlightStrategyId.value = selectedStrategyId.value
+    ?? recentFilteredStrategies.value[0]?.id
+    ?? otherFilteredStrategies.value[0]?.id
+    ?? null
+})
 </script>
 
 <template>
@@ -137,7 +265,25 @@ onMounted(() => {
     <div class="page-header">
       <el-row justify="space-between" align="middle">
         <h2>交易记录</h2>
-        <div />
+        <div class="trade-filters">
+          <el-space size="small" alignment="center">
+            <el-button
+              size="small"
+              plain
+              :type="selectedStrategy ? 'primary' : 'default'"
+              @click="openStrategyPicker"
+            >
+              <span>策略</span>
+              <span v-if="selectedStrategy">: {{ selectedStrategy.name }}</span>
+            </el-button>
+
+            <template v-if="selectedStrategy">
+              <el-tag size="small" type="info" effect="plain">{{ selectedStrategy.symbol }}</el-tag>
+              <el-tag size="small" type="info" effect="plain">{{ getExchangeLabel(selectedStrategy.exchange) }}</el-tag>
+              <el-button size="small" text @click="clearStrategyFilter">清除</el-button>
+            </template>
+          </el-space>
+        </div>
       </el-row>
     </div>
 
@@ -331,10 +477,145 @@ onMounted(() => {
         </el-descriptions>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="strategyPickerVisible"
+      title="选择策略过滤交易记录"
+      width="860px"
+      destroy-on-close
+    >
+      <div class="strategy-picker">
+        <div class="strategy-picker-list">
+          <el-input
+            v-model="strategyKeyword"
+            size="small"
+            clearable
+            placeholder="搜索策略名称 / 交易对 / ID"
+            style="margin-bottom: 10px;"
+          />
+
+          <el-skeleton v-if="strategiesLoading" :rows="8" animated />
+
+          <template v-else>
+            <el-scrollbar height="460px">
+              <template v-if="recentFilteredStrategies.length">
+                <div class="strategy-section-title">最近使用</div>
+                <div
+                  v-for="s in recentFilteredStrategies"
+                  :key="`recent-${s.id}`"
+                  class="strategy-item"
+                  :class="{
+                    'is-active': highlightStrategyId === s.id,
+                    'is-selected': selectedStrategyId === s.id,
+                  }"
+                  @click="highlightStrategyId = s.id"
+                >
+                  <div class="strategy-item-top">
+                    <div class="strategy-name">
+                      {{ s.name }}
+                      <span class="strategy-id">#{{ s.id }}</span>
+                    </div>
+                    <el-tag v-if="s.status === 'deleted'" size="small" type="warning" effect="plain">已删除</el-tag>
+                  </div>
+                  <div class="strategy-item-sub">
+                    <el-tag size="small" type="info" effect="plain">{{ s.symbol }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">{{ getExchangeLabel(s.exchange) }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">网格{{ s.grid_levels }}</el-tag>
+                  </div>
+                </div>
+
+                <div class="strategy-section-divider" />
+              </template>
+
+              <template v-if="otherFilteredStrategies.length">
+                <div class="strategy-section-title">全部策略</div>
+                <div
+                  v-for="s in otherFilteredStrategies"
+                  :key="s.id"
+                  class="strategy-item"
+                  :class="{
+                    'is-active': highlightStrategyId === s.id,
+                    'is-selected': selectedStrategyId === s.id,
+                  }"
+                  @click="highlightStrategyId = s.id"
+                >
+                  <div class="strategy-item-top">
+                    <div class="strategy-name">
+                      {{ s.name }}
+                      <span class="strategy-id">#{{ s.id }}</span>
+                    </div>
+                    <el-tag v-if="s.status === 'deleted'" size="small" type="warning" effect="plain">已删除</el-tag>
+                  </div>
+                  <div class="strategy-item-sub">
+                    <el-tag size="small" type="info" effect="plain">{{ s.symbol }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">{{ getExchangeLabel(s.exchange) }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">网格{{ s.grid_levels }}</el-tag>
+                  </div>
+                </div>
+              </template>
+
+              <div v-if="!otherFilteredStrategies.length && !recentFilteredStrategies.length" class="strategy-empty">
+                没有匹配的策略
+              </div>
+            </el-scrollbar>
+          </template>
+        </div>
+
+        <div class="strategy-picker-preview">
+          <template v-if="highlightStrategy">
+            <div class="preview-head">
+              <div class="preview-title">
+                <div class="preview-name">{{ highlightStrategy.name }}</div>
+                <div class="preview-sub">
+                  <span class="preview-id">策略ID #{{ highlightStrategy.id }}</span>
+                  <span v-if="highlightStrategy.status === 'deleted'" class="preview-deleted">已删除</span>
+                </div>
+              </div>
+              <div class="preview-tags">
+                <el-tag size="small" type="info" effect="plain">{{ highlightStrategy.symbol }}</el-tag>
+                <el-tag size="small" type="info" effect="plain">{{ getExchangeLabel(highlightStrategy.exchange) }}</el-tag>
+              </div>
+            </div>
+
+            <el-descriptions :column="2" border size="small">
+              <el-descriptions-item label="类型">{{ highlightStrategy.strategy_type }}</el-descriptions-item>
+              <el-descriptions-item label="账户ID">{{ highlightStrategy.account_id }}</el-descriptions-item>
+              <el-descriptions-item label="基础订单量">{{ highlightStrategy.base_order_size }}</el-descriptions-item>
+              <el-descriptions-item label="网格层数">{{ highlightStrategy.grid_levels }}</el-descriptions-item>
+              <el-descriptions-item label="买入偏差">{{ highlightStrategy.buy_price_deviation }}</el-descriptions-item>
+              <el-descriptions-item label="卖出偏差">{{ highlightStrategy.sell_price_deviation }}</el-descriptions-item>
+              <el-descriptions-item label="轮询间隔">{{ highlightStrategy.polling_interval }}</el-descriptions-item>
+              <el-descriptions-item label="价格容差">{{ highlightStrategy.price_tolerance }}</el-descriptions-item>
+              <el-descriptions-item label="止损">{{ formatNullable(highlightStrategy.stop_loss) }}</el-descriptions-item>
+              <el-descriptions-item label="最大持仓">{{ highlightStrategy.max_open_positions }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+
+          <div v-else class="preview-empty">
+            从左侧选择一个策略，即可在这里预览基本参数
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="strategy-picker-footer">
+          <el-button @click="clearStrategyFilterAndClose">全部策略</el-button>
+          <div>
+            <el-button @click="strategyPickerVisible = false">取消</el-button>
+            <el-button type="primary" :disabled="!highlightStrategyId" @click="applyStrategyFilter">应用过滤</el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.trade-filters {
+  display: flex;
+  align-items: center;
+}
+
 .exchange-badge {
   display: inline-block;
   padding: 2px 8px;
@@ -406,5 +687,170 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.strategy-picker {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.strategy-picker-list {
+  flex: 0 0 330px;
+  border-right: 1px solid #ebeef5;
+  padding-right: 12px;
+}
+
+.strategy-picker-preview {
+  flex: 1;
+  min-width: 0;
+  padding-left: 4px;
+}
+
+.strategy-section-title {
+  font-size: 12px;
+  color: #909399;
+  margin: 10px 0 8px;
+}
+
+.strategy-section-divider {
+  height: 1px;
+  background: #ebeef5;
+  margin: 12px 0;
+}
+
+.strategy-item {
+  padding: 10px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.strategy-item + .strategy-item {
+  margin-top: 8px;
+}
+
+.strategy-item:hover {
+  background: #f5f7fa;
+}
+
+.strategy-item.is-active {
+  border-color: #c6e2ff;
+  background: #ecf5ff;
+}
+
+.strategy-item.is-selected .strategy-name {
+  font-weight: 600;
+}
+
+.strategy-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.strategy-name {
+  font-size: 13px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strategy-id {
+  margin-left: 6px;
+  color: #909399;
+  font-size: 12px;
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.strategy-item-sub {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.strategy-empty {
+  padding: 18px 10px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.preview-name {
+  font-size: 16px;
+  color: #303133;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.preview-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.preview-id {
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.preview-deleted {
+  color: #e6a23c;
+}
+
+.preview-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.preview-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border-radius: 10px;
+  border: 1px dashed #dcdfe6;
+  color: #909399;
+  font-size: 13px;
+  text-align: center;
+}
+
+.strategy-picker-footer {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 900px) {
+  .strategy-picker {
+    flex-direction: column;
+  }
+  .strategy-picker-list {
+    flex: 0 0 auto;
+    border-right: none;
+    padding-right: 0;
+    border-bottom: 1px solid #ebeef5;
+    padding-bottom: 12px;
+  }
+  .strategy-picker-preview {
+    padding-left: 0;
+  }
 }
 </style>
