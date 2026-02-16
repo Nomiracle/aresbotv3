@@ -142,7 +142,10 @@ class PolymarketStreamManager(StreamManager):
         # 统计
         self._stats_price_updates = 0
         self._stats_order_msgs = 0
+        self._stats_market_msgs = 0
+        self._stats_market_unrecognized = 0
         self._stats_started_at = time.time()
+        self._first_unrecognized_msg: Optional[str] = None
 
         # 错误日志限流
         self._error_log_cache: Dict[str, float] = {}
@@ -250,6 +253,10 @@ class PolymarketStreamManager(StreamManager):
                 self._ws_market.send(json.dumps({
                     "assets_ids": token_ids, "type": "market",
                 }))
+                # 同时发送 operation:subscribe 格式以兼容动态订阅
+                self._ws_market.send(json.dumps({
+                    "assets_ids": token_ids, "operation": "subscribe",
+                }))
         except Exception as err:
             self._log_error_throttled(
                 "market_subscribe", "market subscribe error: %s", err,
@@ -318,7 +325,18 @@ class PolymarketStreamManager(StreamManager):
         if token_ids:
             msg = {"assets_ids": token_ids, "type": "market"}
             ws.send(json.dumps(msg))
-            logger.debug("%s market WS subscribed %d tokens", self._log_prefix, len(token_ids))
+            logger.info(
+                "%s market WS subscribed %d tokens: %s",
+                self._log_prefix, len(token_ids),
+                [t[:16] for t in token_ids],
+            )
+        else:
+            logger.info(
+                "%s market WS connected but no tokens to subscribe yet",
+                self._log_prefix,
+            )
+        # 重置首条未识别消息，便于重连后重新捕获
+        self._first_unrecognized_msg = None
         threading.Thread(
             target=self._ping_ws, args=(ws, "market"), daemon=True,
         ).start()
@@ -331,6 +349,8 @@ class PolymarketStreamManager(StreamManager):
         except json.JSONDecodeError:
             return
 
+        self._stats_market_msgs += 1
+
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, dict):
@@ -341,6 +361,14 @@ class PolymarketStreamManager(StreamManager):
     def _process_market_data(self, data: Dict[str, Any]) -> None:
         changes = self._extract_market_price_changes(data)
         if not changes:
+            self._stats_market_unrecognized += 1
+            if self._first_unrecognized_msg is None:
+                snippet = json.dumps(data, ensure_ascii=False)[:300]
+                self._first_unrecognized_msg = snippet
+                logger.warning(
+                    "%s market msg unrecognized (first): %s",
+                    self._log_prefix, snippet,
+                )
             return
 
         for change in changes:
@@ -385,12 +413,30 @@ class PolymarketStreamManager(StreamManager):
     @staticmethod
     def _extract_market_price_changes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         event_type = str(data.get("event_type") or "").strip().lower()
+
+        # 标准新格式: event_type="price_change" + price_changes 列表
         if event_type == "price_change":
             price_changes = data.get("price_changes")
-            if isinstance(price_changes, list):
+            if isinstance(price_changes, list) and price_changes:
                 return [item for item in price_changes if isinstance(item, dict)]
+
+            # 兼容旧格式: event_type="price_change" + changes 列表 + 根级 asset_id
+            changes = data.get("changes")
+            if isinstance(changes, list) and changes:
+                root_asset_id = data.get("asset_id") or data.get("assetId")
+                result = []
+                for item in changes:
+                    if not isinstance(item, dict):
+                        continue
+                    # 旧格式 changes 中没有 asset_id，从根级注入
+                    if root_asset_id and "asset_id" not in item and "assetId" not in item:
+                        item = {**item, "asset_id": root_asset_id}
+                    result.append(item)
+                return result
+
             return []
 
+        # 兼容: 无 event_type 但有 price_changes 列表
         if isinstance(data.get("price_changes"), list):
             return [
                 item
@@ -398,6 +444,19 @@ class PolymarketStreamManager(StreamManager):
                 if isinstance(item, dict)
             ]
 
+        # 兼容: 无 event_type 但有 changes 列表
+        if isinstance(data.get("changes"), list):
+            root_asset_id = data.get("asset_id") or data.get("assetId")
+            result = []
+            for item in data.get("changes", []):
+                if not isinstance(item, dict):
+                    continue
+                if root_asset_id and "asset_id" not in item and "assetId" not in item:
+                    item = {**item, "asset_id": root_asset_id}
+                result.append(item)
+            return result
+
+        # 单条价格数据: 直接包含 asset_id/assetId
         if "asset_id" in data or "assetId" in data:
             return [data]
 
@@ -666,6 +725,7 @@ class PolymarketStreamManager(StreamManager):
                     "%s [%s] stream_stats prices=%d "
                     "orders=%d active=%d filled=%d filled_ids=%d "
                     "price_updates=%d(%.1f/s) order_msgs=%d(%.1f/s) "
+                    "market_msgs=%d unrecognized=%d "
                     "market_ws=%s user_ws=%s ref_count=%d",
                     self._log_prefix, display, price_count,
                     len(sym_orders), active, filled, filled_ids_count,
@@ -673,6 +733,8 @@ class PolymarketStreamManager(StreamManager):
                     self._stats_price_updates / elapsed,
                     self._stats_order_msgs,
                     self._stats_order_msgs / elapsed,
+                    self._stats_market_msgs,
+                    self._stats_market_unrecognized,
                     "up" if self._ws_market_connected else "down",
                     "up" if self._ws_user_connected else "down",
                     self._ref_count,
