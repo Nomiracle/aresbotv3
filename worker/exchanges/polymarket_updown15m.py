@@ -11,7 +11,7 @@ import string
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pytz
 import requests
@@ -84,6 +84,7 @@ class PolymarketUpDown15m(BaseExchange):
         self._market_lock = threading.Lock()
         self._is_closing = False
         self._last_market_switch_ts: float = 0.0
+        self.on_market_switch: Optional[Callable[[], None]] = None
 
         self._trading_rules = TradingRules(
             tick_size=0.01,
@@ -585,6 +586,10 @@ class PolymarketUpDown15m(BaseExchange):
 
             # 清算持仓
             self._liquidate_position()
+
+            # 通知引擎清空交易状态
+            if self.on_market_switch:
+                self.on_market_switch()
 
             # 切换到新市场
             old_token = self._token_id

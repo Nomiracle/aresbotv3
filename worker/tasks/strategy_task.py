@@ -538,6 +538,7 @@ def _create_engine(
         strategy_type = "grid"
         try:
             from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
+            from worker.polymarket_trading_engine import PolymarketTradingEngine
             from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
         except ModuleNotFoundError as err:
             if err.name == "websocket":
@@ -575,6 +576,14 @@ def _create_engine(
     # Build engine
     if strategy_type == "bilateral_grid":
         engine = BilateralTradingEngine(
+            strategy=strategy_impl,
+            exchange=exchange,
+            risk_manager=risk_manager,
+            state_store=state_store,
+            sync_interval=60,
+        )
+    elif exchange_name == "polymarket_updown15m":
+        engine = PolymarketTradingEngine(
             strategy=strategy_impl,
             exchange=exchange,
             risk_manager=risk_manager,
