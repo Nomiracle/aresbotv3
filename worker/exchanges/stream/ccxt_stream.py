@@ -201,18 +201,27 @@ class CcxtStreamManager(StreamManager):
     def _do_reconcile(self, symbol: str) -> None:
         """执行对账"""
         has = getattr(self._exchange, "has", {})
-        fetch_coro = (
-            self._exchange.fetch_open_orders_ws(symbol)
-            if has.get("fetchOpenOrdersWs")
-            else self._exchange.fetch_open_orders(symbol)
-        )
-        try:
-            rest_orders = self._run_on_loop(fetch_coro)
-        except Exception as err:
-            self._log_error_throttled(
-                "reconcile_fetch", "reconcile fetch_open_orders failed: %s", err
-            )
-            return
+        use_ws = bool(has.get("fetchOpenOrdersWs"))
+        if use_ws:
+            try:
+                rest_orders = self._run_on_loop(
+                    self._exchange.fetch_open_orders_ws(symbol)
+                )
+            except Exception:
+                # WS 方法失败，降级到 REST
+                use_ws = False
+        if not use_ws:
+            try:
+                rest_orders = self._run_on_loop(
+                    self._exchange.fetch_open_orders(symbol)
+                )
+            except Exception as err:
+                self._log_error_throttled(
+                    "reconcile_fetch",
+                    "reconcile fetch_open_orders failed: %s",
+                    err,
+                )
+                return
 
         rest_ids: Set[str] = set()
         for raw_order in rest_orders:
