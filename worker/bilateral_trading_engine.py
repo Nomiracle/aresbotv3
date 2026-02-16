@@ -548,24 +548,26 @@ class BilateralTradingEngine(TradingEngine):
         short_open_orders = [{"price": o.price, "quantity": o.quantity} for o in short_opens_snapshot.values()]
         short_close_orders = [{"price": o.price, "quantity": o.quantity} for o in short_closes_snapshot.values()]
 
+        # 合并做空侧订单到主字段，前端统一展示
+        all_buy_orders = buy_orders + short_close_orders
+        all_sell_orders = sell_orders + short_open_orders
+
         exchange_info = self.exchange.get_exchange_info() or {}
         exchange_id = str(exchange_info.get("id") or "unknown")
 
         status = {
             "exchange": exchange_id,
             "current_price": self._current_price,
-            "pending_buys": len(pending_buys_snapshot),
-            "pending_sells": len(pending_sells_snapshot),
-            "position_count": self.position_tracker.get_position_count(),
-            "buy_orders": buy_orders,
-            "sell_orders": sell_orders,
+            "pending_buys": len(pending_buys_snapshot) + len(short_closes_snapshot),
+            "pending_sells": len(pending_sells_snapshot) + len(short_opens_snapshot),
+            "position_count": self.position_tracker.get_position_count() + short_position_count,
+            "buy_orders": all_buy_orders,
+            "sell_orders": all_sell_orders,
             "last_error": self._last_error,
             "extra_status": {
                 "short_open_count": len(short_opens_snapshot),
                 "short_close_count": len(short_closes_snapshot),
                 "short_position_count": short_position_count,
-                "short_open_orders": short_open_orders,
-                "short_close_orders": short_close_orders,
             },
         }
 
