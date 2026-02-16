@@ -701,7 +701,10 @@ class TradingEngine:
 
                     self.log.info("订单改价成功 [%s]: %s -> %s, 新价格=%s", old_order.side, old_order.order_id, result.order_id, new_price)
                 else:
-                    self.log.warning("订单改价失败 [%s]，已移除旧单: %s", old_order.side, old_order.order_id)
+                    self.log.warning(
+                        "订单改价失败 [%s] old=%s error=%s, 网格位置已丢失将在下一轮补单",
+                        old_order.side, old_order.order_id, result.error,
+                    )
 
     def _check_stop_loss(self) -> None:
         """检查止损"""

@@ -2,9 +2,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from enum import Enum
+import logging
 import math
 
 from worker.core.log_utils import make_log_prefix
+
+logger = logging.getLogger(__name__)
 
 
 class OrderStatus(Enum):
@@ -129,7 +132,7 @@ class BaseExchange(ABC):
         pass
 
     def edit_batch_orders(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
-        """批量改单，默认实现：cancel + recreate，子类可覆写"""
+        """批量改单，默认实现：cancel + recreate + 失败重试/对账，子类可覆写"""
         if not edits:
             return []
 
@@ -153,6 +156,29 @@ class BaseExchange(ABC):
 
         place_results = self.place_batch_orders(new_orders)
 
+        # 对失败的下单重试一次 (处理瞬时网络错误)
+        retry_indices = [
+            i for i, r in enumerate(place_results) if not r.success
+        ]
+        if retry_indices:
+            retry_orders = [new_orders[i] for i in retry_indices]
+            retry_results = self.place_batch_orders(retry_orders)
+            for j, idx in enumerate(retry_indices):
+                if j < len(retry_results) and retry_results[j].success:
+                    place_results[idx] = retry_results[j]
+
+        # 重试后仍失败的，对账查询交易所确认是否实际成功
+        still_failed = [
+            i for i, r in enumerate(place_results) if not r.success
+        ]
+        if still_failed:
+            matched = self._reconcile_failed_placements(
+                [new_orders[i] for i in still_failed],
+            )
+            for j, idx in enumerate(still_failed):
+                if j < len(matched) and matched[j] is not None:
+                    place_results[idx] = matched[j]
+
         results: List[OrderResult] = []
         place_idx = 0
         for edit in edits:
@@ -165,6 +191,43 @@ class BaseExchange(ABC):
             else:
                 results.append(OrderResult(success=False, order_id=edit.order_id, status=OrderStatus.FAILED, error="cancel failed"))
 
+        return results
+
+    def _reconcile_failed_placements(
+        self, failed_orders: List[OrderRequest],
+    ) -> List[Optional[OrderResult]]:
+        """对账：查询交易所挂单，尝试匹配失败的下单请求。
+
+        按 (side, price) 匹配，找到则视为下单实际成功。
+        """
+        results: List[Optional[OrderResult]] = [None] * len(failed_orders)
+        try:
+            open_orders = self.get_open_orders()
+        except Exception:
+            return results
+
+        # 按 (side, price) 索引交易所挂单
+        candidates: Dict[tuple, List[ExchangeOrder]] = {}
+        for o in open_orders:
+            key = (o.side.lower(), round(o.price, 8))
+            candidates.setdefault(key, []).append(o)
+
+        for i, req in enumerate(failed_orders):
+            key = (req.side.lower(), round(req.price, 8))
+            matched_list = candidates.get(key)
+            if matched_list:
+                matched = matched_list.pop(0)
+                results[i] = OrderResult(
+                    success=True,
+                    order_id=matched.order_id,
+                    status=OrderStatus.PLACED,
+                    filled_price=matched.price,
+                    filled_quantity=matched.quantity,
+                )
+                logger.info(
+                    "reconcile: matched failed placement side=%s price=%s -> order_id=%s",
+                    req.side, req.price, matched.order_id,
+                )
         return results
 
     @abstractmethod
