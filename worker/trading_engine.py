@@ -42,6 +42,7 @@ class TradingEngine:
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
         self._stop_loss_triggered: deque[str] = deque(maxlen=1000)
+        self._processed_sell_ids: deque[str] = deque(maxlen=1000)
         self._lock = threading.Lock()
 
         self._running = False
@@ -558,6 +559,11 @@ class TradingEngine:
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
         """处理卖单成交"""
+        if order.order_id in self._processed_sell_ids:
+            self.log.warning("卖单重复成交，跳过: %s", order.order_id)
+            return
+        self._processed_sell_ids.append(order.order_id)
+
         order.update_fill(ex_order.filled_quantity, ex_order.price)
         filled_price = ex_order.price
 

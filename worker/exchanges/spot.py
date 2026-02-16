@@ -637,13 +637,8 @@ class ExchangeSpot(BaseExchange):
         )
         status = _map_order_status(raw_order.get("status"), filled)
 
-        # 判断手续费是否外部支付（如使用BNB抵扣）
-        fee_paid_externally = False
-        fee_info = raw_order.get("fee")
-        if isinstance(fee_info, dict):
-            fee_currency = fee_info.get("currency", "")
-            if fee_currency == "BNB":
-                fee_paid_externally = True
+        # 判断手续费是否外部支付（手续费币种 != 基础币种，如BNB抵扣、USDC计费等）
+        fee_paid_externally = _is_fee_external(raw_order, self._market_symbol)
 
         return ExchangeOrder(
             order_id=order_id,
@@ -746,3 +741,20 @@ def _build_rules_from_precision(
     normalized = numeric_precision.normalize()
     decimals = max(-normalized.as_tuple().exponent, 0)
     return float(numeric_precision), decimals
+
+
+def _is_fee_external(raw_order: Dict[str, Any], symbol: str) -> bool:
+    """判断手续费是否外部支付（不从基础币成交量中扣除）
+
+    手续费币种 != 基础币种时为 True，例如:
+    - Binance 用 BNB 抵扣
+    - Backpack 用 USDC 计费
+    """
+    fee_info = raw_order.get("fee")
+    if not isinstance(fee_info, dict):
+        return False
+    fee_currency = fee_info.get("currency") or ""
+    if not fee_currency:
+        return False
+    base = symbol.split("/")[0] if "/" in symbol else ""
+    return bool(base and fee_currency != base)
