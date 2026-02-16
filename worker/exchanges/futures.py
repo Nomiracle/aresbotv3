@@ -2,10 +2,9 @@
 
 from typing import Any, Dict
 
+from shared.exchanges import FUTURES_EXCHANGE_IDS
 from worker.core.base_exchange import OrderRequest
 from worker.exchanges.spot import ExchangeSpot
-
-FUTURES_EXCHANGE_IDS = {"binanceusdm", "binancecoinm"}
 
 
 class ExchangeFutures(ExchangeSpot):

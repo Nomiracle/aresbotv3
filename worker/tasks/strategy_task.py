@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from worker.celery_app import app
 from worker.core.base_strategy import StrategyConfig
 from shared.core.redis_client import get_redis_client
+from shared.exchanges import FUTURES_EXCHANGE_IDS
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
 from shared.utils.network import get_worker_network_identity
@@ -22,7 +23,7 @@ from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
 from worker.bilateral_trading_engine import BilateralTradingEngine
-from worker.exchanges.futures import ExchangeFutures, FUTURES_EXCHANGE_IDS
+from worker.exchanges.futures import ExchangeFutures
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
 from worker.strategies.bilateral_grid_strategy import BilateralGridStrategy

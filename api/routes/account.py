@@ -18,6 +18,7 @@ from api.deps import get_current_user, get_db_session
 from api.db.crud import AccountCRUD
 from api.db.models import ExchangeAccount
 from shared.core.redis_client import get_redis_client
+from shared.exchanges import FUTURES_EXCHANGE_IDS
 from shared.utils.crypto import decrypt_api_secret, encrypt_api_secret
 
 router = APIRouter()
@@ -28,7 +29,6 @@ EXCHANGES_CACHE_KEY = "exchanges:supported:v3"
 EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
 INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m",)
 DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
-FUTURES_EXCHANGE_IDS = ("binanceusdm", "binancecoinm")
 
 
 def _get_polymarket_updown15m_symbols() -> List[str]:
