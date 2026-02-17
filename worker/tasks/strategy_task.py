@@ -527,7 +527,7 @@ def _create_engine(
     )
     strategy_type = str(strategy_config.get("strategy_type") or "grid").strip().lower()
 
-    if exchange_name == "polymarket_updown15m":
+    if exchange_name in ("polymarket_updown15m", "polymarket_updown5m"):
         if strategy_type == "bilateral_grid":
             logger.warning(
                 "Strategy %s exchange=%s does not support strategy_type=%s; fallback to grid",
@@ -538,6 +538,7 @@ def _create_engine(
         strategy_type = "grid"
         try:
             from worker.exchanges.polymarket_updown15m import PolymarketUpDown15m
+            from worker.exchanges.polymarket_updown5m import PolymarketUpDown5m
             from worker.polymarket_trading_engine import PolymarketTradingEngine
             from worker.strategies.polymarket_grid_strategy import PolymarketGridStrategy
         except ModuleNotFoundError as err:
@@ -547,12 +548,14 @@ def _create_engine(
                 ) from err
             raise
 
-        exchange = PolymarketUpDown15m(
+        poly_cls = PolymarketUpDown5m if exchange_name == "polymarket_updown5m" else PolymarketUpDown15m
+        raw_buffer = strategy_config.get("stop_loss_delay")
+        exchange = poly_cls(
             api_key=api_key,
             api_secret=api_secret,
             symbol=strategy_config["symbol"],
             testnet=account_data.get("testnet", False),
-            market_close_buffer=int(strategy_config.get("stop_loss_delay") or 180),
+            market_close_buffer=int(raw_buffer) if raw_buffer else None,
         )
         strategy_impl = PolymarketGridStrategy(trading_config)
     else:
@@ -583,7 +586,7 @@ def _create_engine(
             state_store=state_store,
             sync_interval=60,
         )
-    elif exchange_name == "polymarket_updown15m":
+    elif exchange_name in ("polymarket_updown15m", "polymarket_updown5m"):
         engine = PolymarketTradingEngine(
             strategy=strategy_impl,
             exchange=exchange,

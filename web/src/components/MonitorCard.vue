@@ -133,7 +133,7 @@ function toFiniteNumber(value: unknown): number | null {
 }
 
 const polymarketStatus = computed(() => {
-  if (props.status?.exchange !== 'polymarket_updown15m') {
+  if (!props.status?.exchange?.startsWith('polymarket_updown')) {
     return null
   }
 
