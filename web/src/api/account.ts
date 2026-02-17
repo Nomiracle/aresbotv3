@@ -122,6 +122,10 @@ export const accountApi = {
     return api.delete(`/accounts/${id}`)
   },
 
+  copy(id: number, exchange: string): Promise<Account> {
+    return api.post(`/accounts/${id}/copy`, { exchange })
+  },
+
   getSymbols(accountId: number): Promise<string[]> {
     return api.get(`/accounts/${accountId}/symbols`)
   },

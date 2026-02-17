@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Account, AccountCreate } from '@/types'
 import { accountApi, preloadExchangeOptionsCache, getExchangeOptionsFromCache } from '@/api/account'
+import type { ExchangeOption } from '@/api/account'
 import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 import AccountForm from '@/components/AccountForm.vue'
 
@@ -10,6 +11,12 @@ const accounts = ref<Account[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const currentAccount = ref<Account | null>(null)
+
+const copyDialogVisible = ref(false)
+const copyTargetExchange = ref('')
+const copySourceAccount = ref<Account | null>(null)
+const copyLoading = ref(false)
+const exchangeOptions = ref<ExchangeOption[]>([])
 
 async function fetchAccounts() {
   loading.value = true
@@ -72,6 +79,32 @@ async function handleSubmit(data: AccountCreate) {
   }
 }
 
+async function handleCopy(account: Account) {
+  copySourceAccount.value = account
+  copyTargetExchange.value = ''
+  try {
+    exchangeOptions.value = await preloadExchangeOptionsCache()
+  } catch {
+    exchangeOptions.value = getExchangeOptionsFromCache()
+  }
+  copyDialogVisible.value = true
+}
+
+async function submitCopy() {
+  if (!copySourceAccount.value || !copyTargetExchange.value) return
+  copyLoading.value = true
+  try {
+    await accountApi.copy(copySourceAccount.value.id, copyTargetExchange.value)
+    ElMessage.success('复制成功')
+    copyDialogVisible.value = false
+    fetchAccounts()
+  } catch {
+    // 错误已在拦截器处理
+  } finally {
+    copyLoading.value = false
+  }
+}
+
 onMounted(() => {
   fetchAccounts()
 })
@@ -120,9 +153,10 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="handleCopy(row)">复制</el-button>
             <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -134,6 +168,26 @@ onMounted(() => {
       :account="currentAccount"
       @submit="handleSubmit"
     />
+
+    <el-dialog v-model="copyDialogVisible" title="复制账户" width="420px">
+      <p style="margin-bottom: 12px">
+        将账户 <strong>{{ copySourceAccount?.label }}</strong> 的凭证复制到新交易所：
+      </p>
+      <el-select v-model="copyTargetExchange" placeholder="选择目标交易所" filterable style="width: 100%">
+        <el-option
+          v-for="opt in exchangeOptions"
+          :key="opt.value"
+          :label="opt.label"
+          :value="opt.value"
+        />
+      </el-select>
+      <template #footer>
+        <el-button @click="copyDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="copyLoading" :disabled="!copyTargetExchange" @click="submitCopy">
+          确认复制
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

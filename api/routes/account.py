@@ -59,6 +59,10 @@ class AccountCreate(BaseModel):
     testnet: bool = False
 
 
+class AccountCopy(BaseModel):
+    exchange: str
+
+
 class AccountUpdate(BaseModel):
     label: Optional[str] = None
     api_key: Optional[str] = None
@@ -397,6 +401,33 @@ async def create_account(
         api_key=encrypted_key,
         api_secret=encrypted_secret,
         testnet=data.testnet,
+    )
+    return account_to_response(account)
+
+
+@router.post("/{account_id}/copy", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
+async def copy_account(
+    account_id: int,
+    data: AccountCopy,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    source = await AccountCRUD.get_by_id(session, account_id, user_email)
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    target_exchange = data.exchange.strip().lower()
+    exchange_label = _format_exchange_label(target_exchange)
+    new_label = f"{source.label} ({exchange_label})"
+
+    account = await AccountCRUD.create(
+        session,
+        user_email=user_email,
+        exchange=target_exchange,
+        label=new_label,
+        api_key=source.api_key,
+        api_secret=source.api_secret,
+        testnet=source.testnet,
     )
     return account_to_response(account)
 
