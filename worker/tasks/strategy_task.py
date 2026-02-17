@@ -27,6 +27,7 @@ from worker.exchanges.futures import ExchangeFutures
 from worker.exchanges.spot import ExchangeSpot
 from worker.strategies.grid_strategy import GridStrategy
 from worker.strategies.bilateral_grid_strategy import BilateralGridStrategy
+from worker.strategies.short_grid_strategy import ShortGridStrategy
 
 
 logger = get_logger("celery.task")
@@ -529,7 +530,7 @@ def _create_engine(
     strategy_type = str(strategy_config.get("strategy_type") or "grid").strip().lower()
 
     if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d"):
-        if strategy_type == "bilateral_grid":
+        if strategy_type in ("bilateral_grid", "short_grid"):
             logger.warning(
                 "Strategy %s exchange=%s does not support strategy_type=%s; fallback to grid",
                 strategy_id,
@@ -579,6 +580,9 @@ def _create_engine(
         if strategy_type == "bilateral_grid":
             strategy_impl = BilateralGridStrategy(trading_config, log_prefix=exchange.log_prefix)
             exchange.ensure_hedge_mode()
+        elif strategy_type == "short_grid":
+            strategy_impl = ShortGridStrategy(trading_config, log_prefix=exchange.log_prefix)
+            exchange.ensure_hedge_mode()
         else:
             strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
             if hasattr(exchange, "detect_position_mode"):
@@ -588,7 +592,7 @@ def _create_engine(
     state_store = TradeStore(strategy_id)
 
     # Build engine
-    if strategy_type == "bilateral_grid":
+    if strategy_type in ("bilateral_grid", "short_grid"):
         engine = BilateralTradingEngine(
             strategy=strategy_impl,
             exchange=exchange,

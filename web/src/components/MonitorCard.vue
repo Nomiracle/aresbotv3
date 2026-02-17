@@ -352,6 +352,7 @@ onUnmounted(() => {
         <span class="title-text">{{ strategy.name }}</span>
         <el-tag size="small" class="symbol-tag">{{ strategy.symbol }}</el-tag>
         <el-tag v-if="strategy.strategy_type === 'bilateral_grid'" size="small" type="warning" class="symbol-tag">双边</el-tag>
+        <el-tag v-if="strategy.strategy_type === 'short_grid'" size="small" type="danger" class="symbol-tag">做空</el-tag>
         <span
           v-if="exchangeLabel && status?.exchange"
           class="exchange-badge"

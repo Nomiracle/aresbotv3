@@ -325,12 +325,13 @@ onMounted(() => {
         <el-select v-model="form.strategy_type" :disabled="Boolean(strategy)" style="width: 100%">
           <el-option label="单边网格" value="grid" />
           <el-option label="双边网格" value="bilateral_grid" />
+          <el-option label="做空网格" value="short_grid" />
         </el-select>
         <div
-          v-if="form.strategy_type === 'bilateral_grid'"
+          v-if="['bilateral_grid', 'short_grid'].includes(form.strategy_type)"
           style="margin-top: 8px; font-size: 12px; color: #e6a23c;"
         >
-          双边网格需要在交易所开启对冲模式（Hedge Mode），请前往 Binance 合约设置中手动开启。
+          双边/做空网格需要在交易所开启对冲模式（Hedge Mode），请前往 Binance 合约设置中手动开启。
         </div>
       </el-form-item>
       <el-form-item label="交易对" prop="symbol">
@@ -349,7 +350,7 @@ onMounted(() => {
           />
         </el-select>
         <div
-          v-if="isFuturesAccount && form.strategy_type !== 'bilateral_grid'"
+          v-if="isFuturesAccount && !['bilateral_grid', 'short_grid'].includes(form.strategy_type)"
           style="margin-top: 8px; font-size: 12px; color: #e6a23c;"
         >
           合约账户建议使用单向持仓模式（One-way），卖单将按 reduceOnly 提交以避免误开反向仓位。
@@ -371,7 +372,7 @@ onMounted(() => {
       <el-form-item label="卖出偏差 %" prop="sell_price_deviation">
         <el-input v-model="form.sell_price_deviation" placeholder="1.0" />
       </el-form-item>
-      <el-form-item :label="form.strategy_type === 'bilateral_grid' ? '网格层数（每边）' : '网格层数'" prop="grid_levels">
+      <el-form-item :label="['bilateral_grid', 'short_grid'].includes(form.strategy_type) ? '网格层数（每边）' : '网格层数'" prop="grid_levels">
         <el-input-number v-model="form.grid_levels" :min="1" :max="20" />
       </el-form-item>
       <el-divider content-position="left">高级设置</el-divider>

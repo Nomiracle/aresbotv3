@@ -300,10 +300,10 @@ async def create_strategy(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
-    if data.strategy_type == "bilateral_grid" and account.exchange.lower() not in FUTURES_EXCHANGE_IDS:
+    if data.strategy_type in ("bilateral_grid", "short_grid") and account.exchange.lower() not in FUTURES_EXCHANGE_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="双边网格策略仅支持合约账户",
+            detail="双边/做空网格策略仅支持合约账户",
         )
 
     strategy = await StrategyCRUD.create(
