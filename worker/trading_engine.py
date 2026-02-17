@@ -354,7 +354,7 @@ class TradingEngine:
                                       ex_order.fee_paid_externally)
                         self._emit_notify(
                             "order_filled",
-                            f"买单成交 #{buy_order.grid_index or ''}",
+                            f"🟢买单成交 #{buy_order.grid_index or ''}",
                             f"价格: {filled_price}, 数量: {buy_order.filled_quantity}",
                         )
 
@@ -420,7 +420,7 @@ class TradingEngine:
                     self._last_error_time = time.time()
                     self._update_status(force=True, source="sync_sell_order_failed")
                     if not all_suppressed:
-                        self._emit_notify("order_failed", "卖单下单失败", latest_order_error)
+                        self._emit_notify("order_failed", "🔴卖单下单失败", latest_order_error)
 
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
@@ -504,7 +504,7 @@ class TradingEngine:
             self._last_error_time = time.time()
             self._update_status(force=True, source="buy_order_failed")
             if not all_suppressed:
-                self._emit_notify("order_failed", "买单下单失败", latest_order_error)
+                self._emit_notify("order_failed", "🟢买单下单失败", latest_order_error)
 
     def _place_sell_order(self, buy_order: Order, price: float) -> Optional[Order]:
         """下卖单"""
@@ -554,7 +554,7 @@ class TradingEngine:
             self.log.warning("卖单下单失败 buy_order=%s aligned_price=%s error=%s", buy_order.order_id, aligned_price, error_msg)
             self._update_status(force=True, source="sell_order_failed")
             if not suppress:
-                self._emit_notify("order_failed", "卖单下单失败", f"买单: {buy_order.order_id}, 错误: {error_msg}")
+                self._emit_notify("order_failed", "🔴卖单下单失败", f"买单: {buy_order.order_id}, 错误: {error_msg}")
             return None
 
     def _handle_sell_filled(self, order: Order, ex_order: ExchangeOrder) -> None:
@@ -584,7 +584,7 @@ class TradingEngine:
         pnl_str = f"{pnl:+.6f}" if pnl is not None else "N/A"
         self._emit_notify(
             "order_filled",
-            f"卖单成交 #{order.grid_index or ''}",
+            f"🔴卖单成交 #{order.grid_index or ''}",
             f"价格: {filled_price}, 盈亏: {pnl_str}",
         )
 

@@ -226,7 +226,7 @@ class BilateralTradingEngine(TradingEngine):
                             ))
                             sell_meta.append(buy_order)
                         self.log.info("做多买单成交: %s, 价格=%s", buy_order.order_id, filled_price)
-                        self._emit_notify("order_filled", f"做多买单成交 #{buy_order.grid_index or ''}", f"价格: {filled_price}")
+                        self._emit_notify("order_filled", f"🟢做多买单成交 #{buy_order.grid_index or ''}", f"价格: {filled_price}")
 
                     elif sell_order is not None:
                         self._handle_sell_filled(sell_order, ex_order)
@@ -317,7 +317,7 @@ class BilateralTradingEngine(TradingEngine):
                             close_meta.append(short_open)
 
                         self.log.info("做空开仓成交: %s, 价格=%s", short_open.order_id, filled_price)
-                        self._emit_notify("order_filled", f"做空开仓 #{abs(short_open.grid_index)}", f"价格: {filled_price}")
+                        self._emit_notify("order_filled", f"🔴做空开仓 #{abs(short_open.grid_index)}", f"价格: {filled_price}")
 
                     elif short_close is not None:
                         # 做空平仓成交 → 计算 PnL → 移除持仓
@@ -335,7 +335,7 @@ class BilateralTradingEngine(TradingEngine):
                         self._save_trade(short_close, filled_price, pnl=pnl, raw_order_info=self._build_raw_order_info(ex_order))
                         self.log.info("做空平仓成交: %s, 价格=%s, 盈亏=%s", short_close.order_id, filled_price, pnl)
                         pnl_str = f"{pnl:+.6f}" if pnl is not None else "N/A"
-                        self._emit_notify("order_filled", f"做空平仓 #{abs(short_close.grid_index)}", f"价格: {filled_price}, 盈亏: {pnl_str}")
+                        self._emit_notify("order_filled", f"🟢做空平仓 #{abs(short_close.grid_index)}", f"价格: {filled_price}, 盈亏: {pnl_str}")
 
                 elif ex_order.status == OrderStatus.CANCELLED:
                     with self._lock:
@@ -455,7 +455,7 @@ class BilateralTradingEngine(TradingEngine):
     def _execute_short_stop_loss(self, sp: ShortPositionEntry) -> None:
         """执行做空止损"""
         self.log.warning("做空止损触发: %s, 入场=%s, 当前=%s", sp.order_id, sp.entry_price, self._current_price)
-        self._emit_notify("stop_loss_triggered", "做空止损触发", f"持仓: {sp.order_id}, 入场: {sp.entry_price}")
+        self._emit_notify("stop_loss_triggered", "🟢做空止损触发", f"持仓: {sp.order_id}, 入场: {sp.entry_price}")
 
         # 取消对应的平仓挂单
         cancel_ids = []

@@ -36,6 +36,7 @@ class NotifyMessage:
     user_email: str
     strategy_id: Optional[int] = None
     symbol: Optional[str] = None
+    exchange: Optional[str] = None
     timestamp: datetime = field(default_factory=datetime.now)
 
 

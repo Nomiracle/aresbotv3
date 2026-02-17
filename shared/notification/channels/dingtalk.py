@@ -69,7 +69,8 @@ class DingTalkNotifier(BaseNotifier):
         label = EVENT_LABELS.get(msg.event.value, msg.event.value)
         lines = [f"[{label}] {msg.title}"]
         if msg.symbol:
-            lines.append(f"交易对: {msg.symbol}")
+            tag = f"{msg.exchange} | {msg.symbol}" if msg.exchange else msg.symbol
+            lines.append(tag)
         lines.append(msg.body)
         lines.append(msg.timestamp.strftime("%Y-%m-%d %H:%M:%S"))
         return "\n".join(lines)

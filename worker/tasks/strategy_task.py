@@ -378,7 +378,7 @@ def run_strategy(
         if is_main_thread:
             signal.signal(signal.SIGTERM, _handle_sigterm)
 
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_started", "策略已启动")
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_started", "策略已启动", account_data.get("exchange", ""))
         engine.start()
 
         if is_main_thread:
@@ -398,7 +398,7 @@ def run_strategy(
             status="error",
             last_error=str(e),
         )
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_error", f"策略异常: {e}")
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_error", f"策略异常: {e}", account_data.get("exchange", ""))
         raise
 
     finally:
@@ -411,7 +411,7 @@ def run_strategy(
         if stop_watcher:
             stop_watcher.stop()
 
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_stopped", "策略已停止")
+        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_stopped", "策略已停止", account_data.get("exchange", ""))
 
         # 4. Stop engine (cancel orders + close exchange)
         if engine:
@@ -427,7 +427,7 @@ def run_strategy(
 
 def _send_lifecycle_notify(
     user_email: str, strategy_id: int, symbol: str,
-    event_value: str, body: str,
+    event_value: str, body: str, exchange: str = "",
 ) -> None:
     """发送策略生命周期通知"""
     if not user_email:
@@ -444,6 +444,7 @@ def _send_lifecycle_notify(
             user_email=user_email,
             strategy_id=strategy_id,
             symbol=symbol,
+            exchange=exchange,
         )
         get_notifier_manager().notify_user(msg)
     except Exception as e:
@@ -634,6 +635,7 @@ def _create_engine(
                     user_email=user_email,
                     strategy_id=strategy_id,
                     symbol=symbol,
+                    exchange=exchange_name,
                 )
                 get_notifier_manager().notify_user(msg)
             except Exception as e:
