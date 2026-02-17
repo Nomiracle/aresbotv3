@@ -140,9 +140,8 @@ class ExchangeFutures(ExchangeSpot):
         if "positionSide" not in params:
             if self._hedge_mode:
                 # 双向持仓模式：普通 grid 默认按 LONG 方向处理
+                # positionSide=LONG + side=sell 已隐含平仓语义，不需要 reduceOnly
                 params["positionSide"] = "LONG"
-                if order.side.lower() == "sell":
-                    params.setdefault("reduceOnly", True)
             elif order.side.lower() == "sell" and "reduceOnly" not in params:
                 # 单向持仓模式：sell 单默认 reduceOnly
                 params["reduceOnly"] = True
