@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 SYMBOLS_CACHE_TTL_SECONDS = 600
 EXCHANGES_CACHE_KEY = "exchanges:supported:v3"
 EXCHANGES_CACHE_TTL_SECONDS = int(os.environ.get("EXCHANGES_CACHE_TTL_SECONDS", "3600"))
-INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h")
+INTERNAL_SUPPORTED_EXCHANGES = ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d")
 DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
 
 
@@ -47,6 +47,12 @@ def _get_polymarket_updown1h_symbols() -> List[str]:
     outcomes = ("Up", "Down")
     return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
 
+
+def _get_polymarket_updown1d_symbols() -> List[str]:
+    markets = ("btc", "eth", "sol", "xrp")
+    outcomes = ("Up", "Down")
+    return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
+
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",
     "binance": "Binance Spot",
@@ -55,6 +61,7 @@ EXCHANGE_LABEL_OVERRIDES = {
     "polymarket_updown15m": "Polymarket UpDown 15m",
     "polymarket_updown5m": "Polymarket UpDown 5m",
     "polymarket_updown1h": "Polymarket UpDown 1h",
+    "polymarket_updown1d": "Polymarket UpDown 1d",
 }
 
 
@@ -389,7 +396,7 @@ async def create_account(
     api_key = data.api_key.strip()
     api_secret = data.api_secret.strip()
 
-    if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h"):
+    if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d"):
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -467,6 +474,8 @@ async def get_account_symbols(
         return _get_polymarket_updown5m_symbols()
     if account.exchange.strip().lower() == "polymarket_updown1h":
         return _get_polymarket_updown1h_symbols()
+    if account.exchange.strip().lower() == "polymarket_updown1d":
+        return _get_polymarket_updown1d_symbols()
 
     cache_key = _get_symbols_cache_key(account.exchange, account.testnet)
     redis_client = get_redis_client().client
@@ -572,7 +581,7 @@ async def update_account(
     exchange_name = account.exchange.strip().lower()
     if "api_key" in update_data and update_data["api_key"]:
         normalized_key = str(update_data["api_key"]).strip()
-        if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h") and not normalized_key:
+        if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d") and not normalized_key:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Polymarket API Key 不能为空（应填写资金地址/funder）",
@@ -580,7 +589,7 @@ async def update_account(
         update_data["api_key"] = encrypt_api_secret(normalized_key)
     if "api_secret" in update_data and update_data["api_secret"]:
         normalized_secret = str(update_data["api_secret"]).strip()
-        if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h"):
+        if exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d"):
             normalized_secret = _normalize_polymarket_private_key(normalized_secret)
         update_data["api_secret"] = encrypt_api_secret(normalized_secret)
 
