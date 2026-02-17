@@ -23,7 +23,10 @@ class PolymarketGridStrategy(GridStrategy):
             current_price, pending_buy_orders, pending_sell_orders, positions,
         )
         # 价格触底后多个网格会 clamp 到同一价格，去重只保留第一个
-        seen_prices: set[float] = set()
+        # 同时排除已有挂单的价格，防止跨轮次重复
+        seen_prices: set[float] = {
+            round(order.price, 2) for order in pending_buy_orders.values()
+        }
         unique: List[TradeDecision] = []
         for d in decisions:
             if d.price not in seen_prices:
