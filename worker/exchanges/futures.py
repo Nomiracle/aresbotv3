@@ -31,9 +31,22 @@ class ExchangeFutures(ExchangeSpot):
             exchange_id=normalized_exchange_id,
             testnet=testnet,
         )
+        self._hedge_mode = False
 
     def get_exchange_info(self) -> Dict[str, str]:
         return {"id": self.exchange_id, "name": self.exchange_id, "type": "futures"}
+
+    def detect_position_mode(self) -> None:
+        """检测账户持仓模式，结果存储到 self._hedge_mode"""
+        try:
+            if hasattr(self._exchange, "fapiPrivateGetPositionSideDual"):
+                result = self._run_sync(lambda: self._exchange.fapiPrivateGetPositionSideDual())
+                self._hedge_mode = result.get("dualSidePosition", False)
+                logger.info("%s 持仓模式: %s", self._log_prefix, "双向" if self._hedge_mode else "单向")
+                return
+        except Exception as err:
+            logger.warning("%s 检测持仓模式失败: %s，默认单向模式", self._log_prefix, err)
+        self._hedge_mode = False
 
     def ensure_hedge_mode(self) -> None:
         """确保账户为双向持仓模式（hedge mode），bilateral 策略需要"""
@@ -124,9 +137,15 @@ class ExchangeFutures(ExchangeSpot):
         # 合并 OrderRequest.params（positionSide、reduceOnly 等）
         params.update(order.params)
 
-        # 仅在没有显式设置时，对 sell 单默认 reduceOnly（兼容单边策略）
-        if order.side.lower() == "sell" and "reduceOnly" not in params and "positionSide" not in params:
-            params["reduceOnly"] = True
+        if "positionSide" not in params:
+            if self._hedge_mode:
+                # 双向持仓模式：普通 grid 默认按 LONG 方向处理
+                params["positionSide"] = "LONG"
+                if order.side.lower() == "sell":
+                    params.setdefault("reduceOnly", True)
+            elif order.side.lower() == "sell" and "reduceOnly" not in params:
+                # 单向持仓模式：sell 单默认 reduceOnly
+                params["reduceOnly"] = True
 
         normalized["params"] = params
         return normalized

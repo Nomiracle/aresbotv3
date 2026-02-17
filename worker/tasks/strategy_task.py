@@ -580,6 +580,8 @@ def _create_engine(
             exchange.ensure_hedge_mode()
         else:
             strategy_impl = GridStrategy(trading_config, log_prefix=exchange.log_prefix)
+            if hasattr(exchange, "detect_position_mode"):
+                exchange.detect_position_mode()
 
     risk_manager = RiskManager(risk_config)
     state_store = TradeStore(strategy_id)
