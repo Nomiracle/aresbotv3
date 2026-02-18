@@ -211,7 +211,7 @@ class StrategyCRUD:
     ) -> Strategy:
         """Update a strategy."""
         for key, value in kwargs.items():
-            if hasattr(strategy, key) and value is not None:
+            if hasattr(strategy, key):
                 setattr(strategy, key, value)
         strategy.updated_at = datetime.now()
         await session.flush()
