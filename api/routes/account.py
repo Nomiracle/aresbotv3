@@ -528,6 +528,10 @@ async def fetch_trading_fee(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
+    # Polymarket 交易所手续费固定为 0，无需走 ccxt 查询
+    if account.exchange.lower().startswith("polymarket"):
+        return TradingFeeResponse(symbol=symbol, maker=0.0, taker=0.0)
+
     try:
         api_key = decrypt_api_secret(account.api_key)
         api_secret = decrypt_api_secret(account.api_secret)
