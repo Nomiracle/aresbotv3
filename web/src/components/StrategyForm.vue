@@ -47,6 +47,10 @@ const isFuturesAccount = computed(() => {
 })
 
 const isPolymarketAccount = computed(() => {
+  // 编辑时直接使用策略自带的 exchange，避免 accounts 异步加载导致字段不显示
+  if (props.strategy) {
+    return (props.strategy.exchange?.toLowerCase() || '').startsWith('polymarket')
+  }
   const exchange = selectedAccount.value?.exchange?.toLowerCase() || ''
   return exchange.startsWith('polymarket')
 })
