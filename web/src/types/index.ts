@@ -42,6 +42,7 @@ export interface Strategy {
   worker_name: string | null
   created_at: string
   updated_at: string
+  runtime_status?: StrategyStatus | null
 }
 
 export interface StrategyCreate {

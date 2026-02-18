@@ -25,17 +25,13 @@ async function fetchStats() {
 
 async function fetchStrategies() {
   strategies.value = await strategyApi.getAll()
-}
-
-async function fetchAllStatus() {
-  await Promise.all(strategies.value.map(async (s) => {
-    try {
-      const status = await strategyApi.getStatus(s.id)
-      statusMap.value.set(s.id, status)
-    } catch {
-      // 忽略
+  const newMap = new Map<number, StrategyStatus>()
+  for (const s of strategies.value) {
+    if (s.runtime_status) {
+      newMap.set(s.id, s.runtime_status)
     }
-  }))
+  }
+  statusMap.value = newMap
 }
 
 function initChart() {
@@ -98,7 +94,6 @@ function getStatusText(id: number) {
 
 onMounted(async () => {
   await Promise.all([fetchStats(), fetchStrategies()])
-  await fetchAllStatus()
   initChart()
 })
 </script>

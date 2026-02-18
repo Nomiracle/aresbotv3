@@ -77,6 +77,7 @@ class StrategyResponse(BaseModel):
     worker_name: Optional[str]
     created_at: str
     updated_at: str
+    runtime_status: Optional["StrategyStatusResponse"] = None
 
     model_config = {"from_attributes": True}
 
@@ -292,7 +293,42 @@ async def list_strategies(
         user_email,
         status_filter=status_filter,
     )
-    return [strategy_to_response(s) for s in strategies]
+    responses = [strategy_to_response(s) for s in strategies]
+
+    # 批量从 Redis 读取运行状态，一次性附加到响应中
+    redis_client = get_redis_client()
+    for resp in responses:
+        if resp.status == StrategyRecordStatus.DELETED:
+            continue
+        info = redis_client.get_running_info(resp.id)
+        if not info:
+            resp.runtime_status = StrategyStatusResponse(
+                strategy_id=resp.id, is_running=False,
+            )
+            continue
+        is_running = redis_client.is_strategy_running(resp.id)
+        if not is_running:
+            info["status"] = "stopped"
+        resp.runtime_status = StrategyStatusResponse(
+            strategy_id=resp.id,
+            is_running=is_running,
+            task_id=info.get("task_id"),
+            worker_ip=info.get("worker_ip"),
+            worker_private_ip=info.get("worker_private_ip"),
+            worker_public_ip=info.get("worker_public_ip"),
+            worker_ip_location=info.get("worker_ip_location"),
+            worker_hostname=info.get("worker_hostname"),
+            exchange=info.get("exchange"),
+            current_price=info.get("current_price"),
+            pending_buys=info.get("pending_buys", 0),
+            pending_sells=info.get("pending_sells", 0),
+            position_count=info.get("position_count", 0),
+            extra_status=info.get("extra_status", {}),
+            started_at=info.get("started_at"),
+            updated_at=info.get("updated_at"),
+        )
+
+    return responses
 
 
 @router.post("", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)

@@ -240,6 +240,14 @@ async function fetchStrategies() {
   try {
     strategies.value = await strategyApi.getAll(strategyStatusFilter.value)
     selectedIds.value = []
+    // 从 runtime_status 填充 statusMap，无需额外请求
+    const newMap = new Map<number, StrategyStatus>()
+    for (const s of strategies.value) {
+      if (s.runtime_status) {
+        newMap.set(s.id, s.runtime_status)
+      }
+    }
+    statusMap.value = newMap
   } finally {
     loading.value = false
   }
@@ -252,12 +260,6 @@ async function fetchStatus(id: number) {
   } catch {
     // 忽略
   }
-}
-
-async function fetchAllStatus() {
-  statusMap.value = new Map()
-  const activeStrategies = strategies.value.filter(s => !isDeleted(s))
-  await Promise.all(activeStrategies.map(s => fetchStatus(s.id)))
 }
 
 function loadWorkersFromCache() {
@@ -304,7 +306,6 @@ async function handleDelete(row: Strategy) {
     ElMessage.success('已归档到已删除策略')
     selectedIds.value = selectedIds.value.filter(id => id !== row.id)
     await fetchStrategies()
-    await fetchAllStatus()
   } catch {}
 }
 
@@ -318,7 +319,6 @@ async function handleSubmit(data: StrategyCreate | StrategyUpdate) {
       ElMessage.success('创建成功')
     }
     await fetchStrategies()
-    await fetchAllStatus()
   } catch {}
 }
 
@@ -343,7 +343,6 @@ async function handleCopy(row: Strategy) {
     await strategyApi.copy(row.id)
     ElMessage.success('复制成功')
     await fetchStrategies()
-    await fetchAllStatus()
   } catch {}
 }
 
@@ -353,7 +352,7 @@ async function handleBatchStart() {
   try {
     const result = await strategyApi.batchStart(selectedIds.value)
     ElMessage.success(`启动成功: ${result.success.length}, 失败: ${result.failed.length}`)
-    fetchAllStatus()
+    fetchStrategies()
   } catch {}
 }
 
@@ -363,7 +362,7 @@ async function handleBatchStop() {
   try {
     const result = await strategyApi.batchStop(selectedIds.value)
     ElMessage.success(`停止成功: ${result.success.length}, 失败: ${result.failed.length}`)
-    fetchAllStatus()
+    fetchStrategies()
   } catch {}
 }
 
@@ -376,7 +375,6 @@ async function handleBatchDelete() {
     ElMessage.success(`删除成功: ${result.success.length}, 失败: ${result.failed.length}`)
     selectedIds.value = []
     await fetchStrategies()
-    await fetchAllStatus()
   } catch {}
 }
 
@@ -386,7 +384,6 @@ async function handleBatchUpdate(update: StrategyUpdate) {
     const result = await strategyApi.batchUpdate(selectedIds.value, update)
     ElMessage.success(`修改成功: ${result.success.length}, 失败: ${result.failed.length}`)
     await fetchStrategies()
-    await fetchAllStatus()
   } catch {}
 }
 
@@ -399,7 +396,6 @@ watch(strategyStatusFilter, () => {
   currentPage.value = 1
   selectedIds.value = []
   fetchStrategies()
-    .then(() => fetchAllStatus())
     .catch(() => {
       // 错误已由拦截器处理
     })
@@ -415,7 +411,6 @@ watch([totalStrategies, pageSize], ([total, size]) => {
 
 onMounted(() => {
   fetchStrategies()
-    .then(() => fetchAllStatus())
     .catch(() => {
       // 错误已由拦截器处理
     })

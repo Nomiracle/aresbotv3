@@ -12,6 +12,13 @@ export const useStrategyStore = defineStore('strategy', () => {
     loading.value = true
     try {
       strategies.value = await strategyApi.getAll()
+      const newMap = new Map<number, StrategyStatus>()
+      for (const s of strategies.value) {
+        if (s.runtime_status) {
+          newMap.set(s.id, s.runtime_status)
+        }
+      }
+      statusMap.value = newMap
     } finally {
       loading.value = false
     }
@@ -22,17 +29,11 @@ export const useStrategyStore = defineStore('strategy', () => {
     statusMap.value.set(id, status)
   }
 
-  async function fetchAllStatus() {
-    const promises = strategies.value.map((s) => fetchStatus(s.id))
-    await Promise.all(promises)
-  }
-
   return {
     strategies,
     statusMap,
     loading,
     fetchStrategies,
     fetchStatus,
-    fetchAllStatus,
   }
 })
