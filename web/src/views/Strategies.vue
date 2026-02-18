@@ -13,6 +13,7 @@ import { getWorkersFromCache, refreshWorkersCache, type WorkerInfo } from '@/api
 import { getExchangeOptionsFromCache } from '@/api/account'
 import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 import StrategyForm from '@/components/StrategyForm.vue'
+import BatchUpdateDialog from '@/components/BatchUpdateDialog.vue'
 import EditableCell from '@/components/EditableCell.vue'
 import type { SelectOption } from '@/components/EditableCell.vue'
 
@@ -20,6 +21,7 @@ const strategies = ref<Strategy[]>([])
 const statusMap = ref<Map<number, StrategyStatus>>(new Map())
 const loading = ref(false)
 const drawerVisible = ref(false)
+const batchUpdateVisible = ref(false)
 const selectedIds = ref<number[]>([])
 const currentStrategy = ref<Strategy | null>(null)
 const searchKeyword = ref('')
@@ -378,6 +380,16 @@ async function handleBatchDelete() {
   } catch {}
 }
 
+async function handleBatchUpdate(update: StrategyUpdate) {
+  if (selectedIds.value.length === 0) return
+  try {
+    const result = await strategyApi.batchUpdate(selectedIds.value, update)
+    ElMessage.success(`修改成功: ${result.success.length}, 失败: ${result.failed.length}`)
+    await fetchStrategies()
+    await fetchAllStatus()
+  } catch {}
+}
+
 watch([searchKeyword, runtimeStatusFilter, workerFilter], () => {
   currentPage.value = 1
   selectedIds.value = []
@@ -455,6 +467,7 @@ onMounted(() => {
 	          <el-button size="small" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchStart">批量启动</el-button>
 	          <el-button size="small" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchStop">批量停止</el-button>
 	          <el-button size="small" type="danger" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="handleBatchDelete">批量删除</el-button>
+	          <el-button size="small" type="warning" :disabled="selectedIds.length === 0 || strategyStatusFilter !== 'active'" @click="batchUpdateVisible = true">批量修改</el-button>
 	          <span style="color: #909399; font-size: 12px;">已选: {{ selectedIds.length }}</span>
 	        </el-space>
 	      </div>
@@ -694,6 +707,7 @@ onMounted(() => {
 	    </el-card>
 
     <StrategyForm v-model:visible="drawerVisible" :strategy="currentStrategy" @submit="handleSubmit" />
+    <BatchUpdateDialog v-model:visible="batchUpdateVisible" :selected-count="selectedIds.length" @submit="handleBatchUpdate" />
   </div>
 </template>
 

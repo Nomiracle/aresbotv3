@@ -67,4 +67,8 @@ export const strategyApi = {
   batchDelete(ids: number[]): Promise<BatchResult> {
     return api.post('/strategies/batch/delete', { strategy_ids: ids })
   },
+
+  batchUpdate(ids: number[], update: StrategyUpdate): Promise<BatchResult> {
+    return api.post('/strategies/batch/update', { strategy_ids: ids, update })
+  },
 }

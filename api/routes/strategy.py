@@ -48,6 +48,7 @@ class StrategyUpdate(BaseModel):
     stop_loss: Optional[Decimal] = None
     stop_loss_delay: Optional[int] = None
     max_open_positions: Optional[int] = None
+    market_close_buffer: Optional[int] = None
     max_daily_drawdown: Optional[Decimal] = None
     worker_name: Optional[str] = None
 
@@ -616,6 +617,35 @@ class BatchRequest(BaseModel):
 class BatchResult(BaseModel):
     success: List[int]
     failed: List[int]
+
+
+class BatchUpdateRequest(BaseModel):
+    strategy_ids: List[int]
+    update: StrategyUpdate
+
+
+@router.post("/batch/update", response_model=BatchResult)
+async def batch_update_strategies(
+    data: BatchUpdateRequest,
+    user_email: str = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """批量更新策略配置，跳过运行中/不存在/已删除的策略。"""
+    success, failed = [], []
+    update_data = data.update.model_dump(exclude_unset=True)
+    if not update_data:
+        return BatchResult(success=[], failed=[])
+    for sid in data.strategy_ids:
+        try:
+            strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
+            if not strategy or _is_strategy_running(sid):
+                failed.append(sid)
+                continue
+            await StrategyCRUD.update(session, strategy, **update_data)
+            success.append(sid)
+        except Exception:
+            failed.append(sid)
+    return BatchResult(success=success, failed=failed)
 
 
 @router.post("/batch/start", response_model=BatchResult)
