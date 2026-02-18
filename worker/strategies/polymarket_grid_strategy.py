@@ -58,6 +58,23 @@ class PolymarketGridStrategy(GridStrategy):
         price_offset = self.config.sell_offset_percent / 100.0
         return self._clamp_price(buy_price + price_offset)
 
+    def should_reprice(
+        self,
+        order_price: float,
+        current_price: float,
+        is_buy: bool,
+        grid_index: int = 1,
+    ) -> Optional[float]:
+        new_price = super().should_reprice(order_price, current_price, is_buy, grid_index)
+        if new_price is not None and is_buy and self.config.min_buy_price is not None:
+            if new_price < self.config.min_buy_price:
+                self.logger.info(
+                    "reprice blocked by min_buy_price: target=%.2f threshold=%.2f",
+                    new_price, self.config.min_buy_price,
+                )
+                return None
+        return new_price
+
     def _calculate_reprice_target_price(
         self,
         current_price: float,
