@@ -46,6 +46,11 @@ const isFuturesAccount = computed(() => {
   return FUTURES_EXCHANGES.has(exchange)
 })
 
+const isPolymarketAccount = computed(() => {
+  const exchange = selectedAccount.value?.exchange?.toLowerCase() || ''
+  return exchange.startsWith('polymarket')
+})
+
 const defaultForm = {
   account_id: undefined as number | undefined,
   name: '',
@@ -59,6 +64,7 @@ const defaultForm = {
   price_tolerance: '0.1',
   stop_loss: null as string | null,
   stop_loss_delay: null as number | null,
+  market_close_buffer: null as number | null,
   max_open_positions: 10,
   max_daily_drawdown: null as string | null,
   worker_name: null as string | null,
@@ -208,6 +214,7 @@ watch(() => props.visible, (val) => {
         price_tolerance: props.strategy.price_tolerance,
         stop_loss: props.strategy.stop_loss,
         stop_loss_delay: props.strategy.stop_loss_delay,
+        market_close_buffer: props.strategy.market_close_buffer,
         max_open_positions: props.strategy.max_open_positions,
         max_daily_drawdown: props.strategy.max_daily_drawdown,
         worker_name: props.strategy.worker_name || null,
@@ -387,6 +394,9 @@ onMounted(() => {
       </el-form-item>
       <el-form-item label="止损延迟(秒)">
         <el-input-number v-model="form.stop_loss_delay" :min="0" />
+      </el-form-item>
+      <el-form-item v-if="isPolymarketAccount" label="市场切换缓冲(秒)">
+        <el-input-number v-model="form.market_close_buffer" :min="0" />
       </el-form-item>
       <el-form-item label="最大持仓数">
         <el-input-number v-model="form.max_open_positions" :min="1" :max="100" />

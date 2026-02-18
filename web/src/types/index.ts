@@ -35,6 +35,7 @@ export interface Strategy {
   price_tolerance: string
   stop_loss: string | null
   stop_loss_delay: number | null
+  market_close_buffer: number | null
   max_open_positions: number
   max_daily_drawdown: string | null
   worker_name: string | null
@@ -55,6 +56,7 @@ export interface StrategyCreate {
   price_tolerance?: string
   stop_loss?: string | null
   stop_loss_delay?: number | null
+  market_close_buffer?: number | null
   max_open_positions?: number
   max_daily_drawdown?: string | null
   worker_name?: string | null
@@ -112,6 +114,7 @@ export interface RunningStrategy {
   price_tolerance: string
   stop_loss?: string | null
   stop_loss_delay?: number | null
+  market_close_buffer?: number | null
   max_open_positions: number
   max_daily_drawdown?: string | null
   worker_name?: string | null

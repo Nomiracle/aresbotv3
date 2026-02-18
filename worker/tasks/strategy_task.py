@@ -558,7 +558,7 @@ def _create_engine(
             "polymarket_updown1d": PolymarketUpDown1d,
         }
         poly_cls = poly_cls_map.get(exchange_name, PolymarketUpDown15m)
-        raw_buffer = strategy_config.get("stop_loss_delay")
+        raw_buffer = strategy_config.get("market_close_buffer")
         exchange = poly_cls(
             api_key=api_key,
             api_secret=api_secret,

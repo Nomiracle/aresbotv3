@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS strategy (
     price_tolerance DECIMAL(10, 4) NOT NULL DEFAULT 0.5,
     stop_loss DECIMAL(10, 4) DEFAULT NULL,
     stop_loss_delay INT DEFAULT NULL,
+    market_close_buffer INT DEFAULT NULL,
     max_open_positions INT NOT NULL DEFAULT 10,
     max_daily_drawdown DECIMAL(20, 8) DEFAULT NULL,
     worker_name VARCHAR(100) DEFAULT NULL,
