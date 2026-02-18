@@ -480,8 +480,21 @@ class BilateralTradingEngine(TradingEngine):
             OrderRequest(side="buy", price=stop_price, quantity=stop_qty,
                          params={"positionSide": "SHORT", "reduceOnly": True})
         ])
-        if results and results[0].success:
-            self.log.info("做空止损单已下: %s", results[0].order_id)
+        if results and results[0].success and results[0].order_id:
+            result = results[0]
+            stop_order = Order(
+                order_id=result.order_id,
+                symbol=self.strategy.config.symbol,
+                side="buy",
+                price=stop_price,
+                quantity=stop_qty,
+                grid_index=sp.grid_index,
+                state=OrderState.PLACED,
+                related_order_id=sp.order_id,
+            )
+            with self._lock:
+                self._pending_short_closes[result.order_id] = stop_order
+            self.log.info("做空止损单已下: %s, 价格=%s", result.order_id, stop_price)
 
     # ==================== Override: 定期同步 ====================
 

@@ -84,7 +84,7 @@ class PolymarketUpDown15m(BaseExchange):
         self._market_lock = threading.Lock()
         self._is_closing = False
         self._last_market_switch_ts: float = 0.0
-        self.on_market_switch: Optional[Callable[[], None]] = None
+        self.on_market_switch: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None
 
         self._trading_rules = TradingRules(
             tick_size=0.01,
@@ -574,11 +574,11 @@ class PolymarketUpDown15m(BaseExchange):
             self._cancel_all_market_orders()
 
             # 清算持仓
-            self._liquidate_position()
+            liquidation_result = self._liquidate_position()
 
             # 通知引擎清空交易状态
             if self.on_market_switch:
-                self.on_market_switch()
+                self.on_market_switch(liquidation_result)
 
             # 切换到新市场
             old_token = self._token_id
@@ -610,14 +610,14 @@ class PolymarketUpDown15m(BaseExchange):
         except Exception as e:
             logger.warning("%s cancel_market_orders failed: %s", self.log_prefix, e)
 
-    def _liquidate_position(self) -> None:
-        """以IOC市价单清算当前token持仓."""
+    def _liquidate_position(self) -> Optional[Dict[str, Any]]:
+        """以IOC市价单清算当前token持仓, 返回清算结果."""
         if not self._token_id:
-            return
+            return None
         try:
             balance = self._get_token_balance(self._token_id)
             if balance < 1.0:
-                return
+                return None
 
             order_args = OrderArgs(
                 price=0.01,
@@ -626,10 +626,16 @@ class PolymarketUpDown15m(BaseExchange):
                 token_id=self._token_id,
             )
             signed = self._client.create_order(order_args)
-            self._post_order(signed, OrderType.FOK)
+            raw_response = self._post_order(signed, OrderType.FOK)
             logger.info("%s liquidated position qty=%s", self.log_prefix, balance)
+            return {
+                "quantity": balance,
+                "price": 0.01,
+                "raw_response": raw_response,
+            }
         except Exception as e:
             logger.warning("%s liquidate position failed: %s", self.log_prefix, e)
+            return None
 
     def _get_token_balance(self, token_id: str) -> float:
         """查询指定token的可用余额."""

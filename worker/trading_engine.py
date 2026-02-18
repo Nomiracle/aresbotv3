@@ -759,8 +759,21 @@ class TradingEngine:
             OrderRequest(side="sell", price=stop_price, quantity=stop_qty)
         ])
 
-        if results and results[0].success:
-            self.log.info("止损单已下: %s", results[0].order_id)
+        if results and results[0].success and results[0].order_id:
+            result = results[0]
+            stop_order = Order(
+                order_id=result.order_id,
+                symbol=position.symbol,
+                side="sell",
+                price=stop_price,
+                quantity=stop_qty,
+                grid_index=position.grid_index,
+                state=OrderState.PLACED,
+                related_order_id=position.order_id,
+            )
+            with self._lock:
+                self._pending_sells[result.order_id] = stop_order
+            self.log.info("止损单已下: %s, 价格=%s", result.order_id, stop_price)
 
     def _periodic_sync(self) -> None:
         """定期同步"""
