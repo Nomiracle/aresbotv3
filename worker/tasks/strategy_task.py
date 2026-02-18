@@ -518,6 +518,7 @@ def _create_engine(
         order_grid=strategy_config["grid_levels"],
         interval=float(strategy_config["polling_interval"]),
         reprice_threshold=float(strategy_config["price_tolerance"]),
+        min_buy_price=float(strategy_config["min_buy_price"]) if strategy_config.get("min_buy_price") else None,
     )
 
     # Build risk settings

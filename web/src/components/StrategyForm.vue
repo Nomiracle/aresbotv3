@@ -65,6 +65,7 @@ const defaultForm = {
   stop_loss: null as string | null,
   stop_loss_delay: null as number | null,
   market_close_buffer: null as number | null,
+  min_buy_price: null as string | null,
   max_open_positions: 10,
   max_daily_drawdown: null as string | null,
   worker_name: null as string | null,
@@ -215,6 +216,7 @@ watch(() => props.visible, (val) => {
         stop_loss: props.strategy.stop_loss,
         stop_loss_delay: props.strategy.stop_loss_delay,
         market_close_buffer: props.strategy.market_close_buffer,
+        min_buy_price: props.strategy.min_buy_price,
         max_open_positions: props.strategy.max_open_positions,
         max_daily_drawdown: props.strategy.max_daily_drawdown,
         worker_name: props.strategy.worker_name || null,
@@ -397,6 +399,9 @@ onMounted(() => {
       </el-form-item>
       <el-form-item v-if="isPolymarketAccount" label="市场切换缓冲(秒)">
         <el-input-number v-model="form.market_close_buffer" :min="0" />
+      </el-form-item>
+      <el-form-item v-if="isPolymarketAccount" label="最低买入价">
+        <el-input v-model="form.min_buy_price" placeholder="留空表示不设置" />
       </el-form-item>
       <el-form-item label="最大持仓数">
         <el-input-number v-model="form.max_open_positions" :min="1" :max="100" />

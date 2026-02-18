@@ -56,6 +56,7 @@ class Strategy(SQLModel, table=True):
     stop_loss: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)
     stop_loss_delay: Optional[int] = Field(default=None)
     market_close_buffer: Optional[int] = Field(default=None)
+    min_buy_price: Optional[Decimal] = Field(default=None, max_digits=10, decimal_places=4)
     max_open_positions: int = Field(default=10)
     max_daily_drawdown: Optional[Decimal] = Field(
         default=None, max_digits=20, decimal_places=8

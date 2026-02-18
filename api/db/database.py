@@ -127,6 +127,26 @@ async def create_tables() -> None:
         if strategy_status_index_result.scalar_one_or_none() is None:
             await conn.execute(text("CREATE INDEX idx_status ON strategy (status)"))
 
+        min_buy_price_result = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'strategy'
+                  AND COLUMN_NAME = 'min_buy_price'
+                LIMIT 1
+                """
+            )
+        )
+        if min_buy_price_result.scalar_one_or_none() is None:
+            await conn.execute(
+                text(
+                    "ALTER TABLE strategy "
+                    "ADD COLUMN min_buy_price DECIMAL(10,4) NULL"
+                )
+            )
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Get an async database session."""

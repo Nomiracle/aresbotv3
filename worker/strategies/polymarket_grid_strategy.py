@@ -1,5 +1,6 @@
 from typing import List, Mapping, Optional, Sequence
 
+from shared.utils.logger import get_logger
 from worker.core.base_strategy import Signal, TradeDecision
 from worker.domain.order import Order
 from worker.domain.position import PositionEntry
@@ -11,6 +12,10 @@ class PolymarketGridStrategy(GridStrategy):
 
     _MIN_PRICE = 0.01
     _MAX_PRICE = 0.99
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.logger = get_logger("polymarket_grid")
 
     def should_buy_batch(
         self,
@@ -32,6 +37,16 @@ class PolymarketGridStrategy(GridStrategy):
             if d.price not in seen_prices:
                 seen_prices.add(d.price)
                 unique.append(d)
+
+        if self.config.min_buy_price is not None:
+            before = len(unique)
+            unique = [d for d in unique if d.price >= self.config.min_buy_price]
+            if len(unique) < before:
+                self.logger.info(
+                    "min_buy_price filter: %d -> %d (threshold=%.2f)",
+                    before, len(unique), self.config.min_buy_price,
+                )
+
         return unique
 
     def _calculate_buy_price(self, current_price: float, grid_index: int) -> float:

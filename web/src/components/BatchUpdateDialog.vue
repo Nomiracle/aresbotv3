@@ -32,6 +32,7 @@ const fields: FieldDef[] = [
   { key: 'stop_loss', label: '止损 %', type: 'text', nullable: true },
   { key: 'stop_loss_delay', label: '止损延迟(秒)', type: 'number' },
   { key: 'market_close_buffer', label: '市场切换缓冲(秒)', type: 'number' },
+  { key: 'min_buy_price', label: '最低买入价', type: 'text', nullable: true },
   { key: 'max_open_positions', label: '最大持仓数', type: 'number', min: 1, max: 100 },
   { key: 'max_daily_drawdown', label: '日最大回撤 %', type: 'text', nullable: true },
   { key: 'worker_name', label: '指定 Worker', type: 'select', nullable: true },

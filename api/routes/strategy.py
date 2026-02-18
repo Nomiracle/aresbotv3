@@ -33,6 +33,7 @@ class StrategyCreate(BaseModel):
     max_open_positions: int = 10
     max_daily_drawdown: Optional[Decimal] = None
     worker_name: Optional[str] = None
+    min_buy_price: Optional[Decimal] = None
 
 
 class StrategyUpdate(BaseModel):
@@ -49,6 +50,7 @@ class StrategyUpdate(BaseModel):
     stop_loss_delay: Optional[int] = None
     max_open_positions: Optional[int] = None
     market_close_buffer: Optional[int] = None
+    min_buy_price: Optional[Decimal] = None
     max_daily_drawdown: Optional[Decimal] = None
     worker_name: Optional[str] = None
 
@@ -71,6 +73,7 @@ class StrategyResponse(BaseModel):
     stop_loss_delay: Optional[int]
     max_open_positions: int
     max_daily_drawdown: Optional[Decimal]
+    min_buy_price: Optional[Decimal]
     worker_name: Optional[str]
     created_at: str
     updated_at: str
@@ -160,6 +163,7 @@ def strategy_to_response(strategy: Strategy) -> StrategyResponse:
         stop_loss_delay=strategy.stop_loss_delay,
         max_open_positions=strategy.max_open_positions,
         max_daily_drawdown=strategy.max_daily_drawdown,
+        min_buy_price=strategy.min_buy_price,
         worker_name=strategy.worker_name,
         created_at=strategy.created_at.isoformat(),
         updated_at=strategy.updated_at.isoformat(),
@@ -324,6 +328,7 @@ async def create_strategy(
         stop_loss_delay=data.stop_loss_delay,
         max_open_positions=data.max_open_positions,
         max_daily_drawdown=data.max_daily_drawdown,
+        min_buy_price=data.min_buy_price,
         worker_name=data.worker_name,
     )
     return strategy_to_response(strategy)
@@ -493,6 +498,7 @@ async def start_strategy(
         "stop_loss_delay": strategy.stop_loss_delay,
         "max_open_positions": strategy.max_open_positions,
         "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+        "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
     }
 
     # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
@@ -515,6 +521,7 @@ async def start_strategy(
             "stop_loss_delay": strategy.stop_loss_delay,
             "max_open_positions": strategy.max_open_positions,
             "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+            "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
             "worker_name": worker_name,
             "exchange": account.exchange,
         },
@@ -685,6 +692,7 @@ async def batch_start_strategies(
                 "stop_loss_delay": strategy.stop_loss_delay,
                 "max_open_positions": strategy.max_open_positions,
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+                "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
             }
             await asyncio.to_thread(_validate_worker, strategy.worker_name)
             strategy_runtime = {
@@ -703,6 +711,7 @@ async def batch_start_strategies(
                     "stop_loss_delay": strategy.stop_loss_delay,
                     "max_open_positions": strategy.max_open_positions,
                     "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
+                    "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
                     "worker_name": strategy.worker_name,
                     "exchange": account.exchange,
                 },
@@ -800,6 +809,7 @@ async def copy_strategy(
         stop_loss_delay=strategy.stop_loss_delay,
         max_open_positions=strategy.max_open_positions,
         max_daily_drawdown=strategy.max_daily_drawdown,
+        min_buy_price=strategy.min_buy_price,
         worker_name=strategy.worker_name,
     )
     return strategy_to_response(new_strategy)

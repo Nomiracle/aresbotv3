@@ -33,6 +33,7 @@ class StrategyConfig:
     order_grid: int = 1
     interval: float = 1.0
     reprice_threshold: float = 0.5
+    min_buy_price: Optional[float] = None
 
 
 class BaseStrategy(ABC):
