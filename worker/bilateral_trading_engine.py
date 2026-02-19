@@ -533,8 +533,59 @@ class BilateralTradingEngine(TradingEngine):
     # ==================== Override: 恢复挂单 ====================
 
     def _recover_open_orders(self) -> None:
-        """恢复挂单 - 做多侧用父类，做空侧暂不恢复（需要 positionSide 信息）"""
-        super()._recover_open_orders()
+        """恢复挂单 - 根据 positionSide 分类到做多/做空侧"""
+        try:
+            open_orders = self.exchange.get_open_orders()
+        except Exception as err:
+            self.log.warning("恢复挂单失败: %s", err)
+            return
+
+        if not open_orders:
+            return
+
+        recovered_buys: dict[str, Order] = {}
+        recovered_sells: dict[str, Order] = {}
+        recovered_short_opens: dict[str, Order] = {}
+        recovered_short_closes: dict[str, Order] = {}
+
+        for ex_order in open_orders:
+            raw = (ex_order.extra or {}).get("raw_order") or {}
+            pos_side = str(raw.get("info", {}).get("positionSide") or raw.get("positionSide") or "").upper()
+
+            order = Order(
+                order_id=ex_order.order_id,
+                symbol=ex_order.symbol,
+                side=ex_order.side,
+                price=ex_order.price,
+                quantity=ex_order.quantity,
+                state=OrderState.PLACED,
+                filled_quantity=ex_order.filled_quantity,
+                filled_price=ex_order.price,
+                related_order_id=(ex_order.extra or {}).get("related_order_id"),
+            )
+
+            if pos_side == "SHORT":
+                if order.side == "sell":
+                    recovered_short_opens[order.order_id] = order
+                else:
+                    recovered_short_closes[order.order_id] = order
+            else:
+                if order.side == "buy":
+                    recovered_buys[order.order_id] = order
+                else:
+                    recovered_sells[order.order_id] = order
+
+        with self._lock:
+            self._pending_buys.update(recovered_buys)
+            self._pending_sells.update(recovered_sells)
+            self._pending_short_opens.update(recovered_short_opens)
+            self._pending_short_closes.update(recovered_short_closes)
+
+        self.log.info(
+            "启动恢复挂单 long_buys=%s long_sells=%s short_opens=%s short_closes=%s",
+            len(recovered_buys), len(recovered_sells),
+            len(recovered_short_opens), len(recovered_short_closes),
+        )
 
     # ==================== Override: 状态更新 ====================
 
