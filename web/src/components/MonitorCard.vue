@@ -22,6 +22,7 @@ interface MonitorCardStrategy {
   max_daily_drawdown?: string | null
   worker_name?: string | null
   strategy_type?: string
+  market_close_buffer?: number | null
 }
 
 const props = defineProps<{
@@ -188,7 +189,20 @@ const polymarketTooltipText = computed(() => {
   return `数据来源：worker 上报的 extra_status（Polymarket 适配器）。\n` +
     `market：当前15分钟市场 slug。\n` +
     `剩余：距离该市场结束的倒计时。\n` +
+    `切换：距离策略触发市场切换的倒计时（= 剩余 - 缓冲秒数）。\n` +
     `token：当前交易 outcome 对应的 token_id。`
+})
+
+const polymarketSwitchSeconds = computed(() => {
+  const remaining = polymarketRemainingSeconds.value
+  if (remaining === null) return null
+  const buffer = props.strategy.market_close_buffer ?? 0
+  return Math.max(0, remaining - buffer)
+})
+
+const isSwitchCritical = computed(() => {
+  const s = polymarketSwitchSeconds.value
+  return s !== null && s <= 30
 })
 
 const isPolymarketCritical = computed(() => {
@@ -425,6 +439,13 @@ onUnmounted(() => {
       <span :class="['exchange-value', { danger: isPolymarketCritical }]">
         {{ formatCountdown(polymarketRemainingSeconds) }}
       </span>
+      <template v-if="polymarketSwitchSeconds !== null">
+        <span class="separator">|</span>
+        <span class="exchange-label">切换:</span>
+        <span :class="['exchange-value', { danger: isSwitchCritical }]">
+          {{ formatCountdown(polymarketSwitchSeconds) }}
+        </span>
+      </template>
       <template v-if="polymarketStatus.tokenId">
         <span class="separator">|</span>
         <span class="exchange-label">Token:</span>
