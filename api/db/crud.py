@@ -110,6 +110,7 @@ class StrategyCRUD:
         max_daily_drawdown: Optional[Decimal] = None,
         worker_name: Optional[str] = None,
         strategy_type: str = "grid",
+        min_buy_price: Optional[Decimal] = None,
     ) -> Strategy:
         """Create a new strategy."""
         strategy = Strategy(
@@ -129,6 +130,7 @@ class StrategyCRUD:
             max_open_positions=max_open_positions,
             max_daily_drawdown=max_daily_drawdown,
             worker_name=worker_name,
+            min_buy_price=min_buy_price,
         )
         session.add(strategy)
         await session.flush()
