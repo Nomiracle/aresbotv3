@@ -69,10 +69,10 @@ class PolymarketGridStrategy(GridStrategy):
         if new_price is not None and is_buy and self.config.min_buy_price is not None:
             if new_price < self.config.min_buy_price:
                 self.logger.info(
-                    "reprice blocked by min_buy_price: target=%.2f threshold=%.2f",
+                    "reprice -> cancel: target=%.2f < min_buy_price=%.2f",
                     new_price, self.config.min_buy_price,
                 )
-                return None
+                return -1  # 取消信号
         return new_price
 
     def _calculate_reprice_target_price(

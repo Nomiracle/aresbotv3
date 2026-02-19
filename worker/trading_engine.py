@@ -642,6 +642,7 @@ class TradingEngine:
 
         edit_requests: list[EditOrderRequest] = []
         order_map: list[Order] = []  # 与 edit_requests 对应
+        cancel_orders: list[Order] = []
 
         rules = self._rules
 
@@ -653,6 +654,9 @@ class TradingEngine:
                 grid_index=order.grid_index,
             )
             if new_price:
+                if new_price < 0:
+                    cancel_orders.append(order)
+                    continue
                 aligned_price = self.exchange.align_price(new_price, rules)
                 edit_requests.append(EditOrderRequest(
                     order_id=order.order_id, side="buy", price=aligned_price, quantity=order.quantity,
@@ -672,6 +676,19 @@ class TradingEngine:
                     order_id=order.order_id, side="sell", price=aligned_price, quantity=order.quantity,
                 ))
                 order_map.append(order)
+
+        if not edit_requests and not cancel_orders:
+            return
+
+        # 取消僵尸订单
+        if cancel_orders:
+            cancel_ids = [o.order_id for o in cancel_orders]
+            self.log.info("取消僵尸买单: %s", cancel_ids)
+            results = self.exchange.cancel_batch_orders(cancel_ids)
+            with self._lock:
+                for idx, r in enumerate(results):
+                    if r.success:
+                        self._pending_buys.pop(cancel_ids[idx], None)
 
         if not edit_requests:
             return
