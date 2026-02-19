@@ -138,11 +138,14 @@ class PolymarketUpDown15m(BaseExchange):
         return 0.0
 
     def get_status_extra(self) -> Dict[str, Any]:
+        seconds_until_close = self._seconds_until_close()
         return {
             "market_slug": self._market_slug,
             "token_id": self._token_id,
             "market_end_time": self._market_end_time,
-            "seconds_until_close": self._seconds_until_close(),
+            "seconds_until_close": seconds_until_close,
+            "market_close_buffer": self._market_close_buffer,
+            "seconds_until_switch": max(0, seconds_until_close - self._market_close_buffer),
             "is_closing": self._is_closing,
             "switch_guard_active": not self._is_switch_guard_passed(),
             "condition_id": self._condition_id,

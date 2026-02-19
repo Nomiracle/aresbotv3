@@ -126,6 +126,11 @@ class RedisClient:
             "price_tolerance": str(snapshot.get("price_tolerance") or ""),
             "stop_loss": str(snapshot.get("stop_loss") or ""),
             "stop_loss_delay": str(snapshot.get("stop_loss_delay") or ""),
+            "market_close_buffer": (
+                str(snapshot.get("market_close_buffer"))
+                if snapshot.get("market_close_buffer") is not None
+                else ""
+            ),
             "max_open_positions": str(snapshot.get("max_open_positions") or "0"),
             "max_daily_drawdown": str(snapshot.get("max_daily_drawdown") or ""),
             "worker_name": str(snapshot.get("worker_name") or ""),
@@ -274,7 +279,30 @@ class RedisClient:
         if not info:
             return None
 
+        def _to_optional_int(raw_value: Any) -> Optional[int]:
+            if raw_value is None:
+                return None
+            if isinstance(raw_value, bool):
+                return int(raw_value)
+            if isinstance(raw_value, int):
+                return raw_value
+            if isinstance(raw_value, float):
+                return int(raw_value)
+            if isinstance(raw_value, str):
+                normalized = raw_value.strip()
+                if not normalized:
+                    return None
+                try:
+                    return int(normalized)
+                except ValueError:
+                    return None
+            try:
+                return int(raw_value)
+            except (TypeError, ValueError):
+                return None
+
         stop_loss_delay = info.get("stop_loss_delay", "")
+        market_close_buffer = info.get("market_close_buffer", "")
         max_open_positions = info.get("max_open_positions", "0")
 
         try:
@@ -297,6 +325,9 @@ class RedisClient:
         except json.JSONDecodeError:
             extra_status = {}
 
+        runtime_market_close_buffer = _to_optional_int(runtime_config.get("market_close_buffer"))
+        cached_market_close_buffer = _to_optional_int(market_close_buffer)
+
         return {
             "task_id": info.get("task_id", ""),
             "worker_ip": info.get("worker_ip", ""),
@@ -316,6 +347,11 @@ class RedisClient:
             "price_tolerance": info.get("price_tolerance", ""),
             "stop_loss": info.get("stop_loss") or None,
             "stop_loss_delay": int(stop_loss_delay) if stop_loss_delay else None,
+            "market_close_buffer": (
+                cached_market_close_buffer
+                if cached_market_close_buffer is not None
+                else runtime_market_close_buffer
+            ),
             "max_open_positions": int(max_open_positions or 0),
             "max_daily_drawdown": info.get("max_daily_drawdown") or None,
             "worker_name": info.get("worker_name") or None,

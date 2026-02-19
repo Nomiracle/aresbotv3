@@ -30,6 +30,7 @@ class StrategyCreate(BaseModel):
     price_tolerance: Decimal = Decimal("0.5")
     stop_loss: Optional[Decimal] = None
     stop_loss_delay: Optional[int] = None
+    market_close_buffer: Optional[int] = None
     max_open_positions: int = 10
     max_daily_drawdown: Optional[Decimal] = None
     worker_name: Optional[str] = None
@@ -71,6 +72,7 @@ class StrategyResponse(BaseModel):
     price_tolerance: Decimal
     stop_loss: Optional[Decimal]
     stop_loss_delay: Optional[int]
+    market_close_buffer: Optional[int]
     max_open_positions: int
     max_daily_drawdown: Optional[Decimal]
     min_buy_price: Optional[Decimal]
@@ -119,6 +121,7 @@ class RunningStrategyResponse(BaseModel):
     price_tolerance: str
     stop_loss: Optional[str] = None
     stop_loss_delay: Optional[int] = None
+    market_close_buffer: Optional[int] = None
     max_open_positions: int
     max_daily_drawdown: Optional[str] = None
     worker_name: Optional[str] = None
@@ -162,6 +165,7 @@ def strategy_to_response(strategy: Strategy) -> StrategyResponse:
         price_tolerance=strategy.price_tolerance,
         stop_loss=strategy.stop_loss,
         stop_loss_delay=strategy.stop_loss_delay,
+        market_close_buffer=strategy.market_close_buffer,
         max_open_positions=strategy.max_open_positions,
         max_daily_drawdown=strategy.max_daily_drawdown,
         min_buy_price=strategy.min_buy_price,
@@ -362,6 +366,7 @@ async def create_strategy(
         price_tolerance=data.price_tolerance,
         stop_loss=data.stop_loss,
         stop_loss_delay=data.stop_loss_delay,
+        market_close_buffer=data.market_close_buffer,
         max_open_positions=data.max_open_positions,
         max_daily_drawdown=data.max_daily_drawdown,
         min_buy_price=data.min_buy_price,
@@ -400,6 +405,7 @@ async def get_running_strategies(
             price_tolerance=info.get("price_tolerance", ""),
             stop_loss=info.get("stop_loss"),
             stop_loss_delay=info.get("stop_loss_delay"),
+            market_close_buffer=info.get("market_close_buffer"),
             max_open_positions=info.get("max_open_positions", 0),
             max_daily_drawdown=info.get("max_daily_drawdown"),
             worker_name=info.get("worker_name"),
@@ -532,6 +538,7 @@ async def start_strategy(
         "price_tolerance": str(strategy.price_tolerance),
         "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
         "stop_loss_delay": strategy.stop_loss_delay,
+        "market_close_buffer": strategy.market_close_buffer,
         "max_open_positions": strategy.max_open_positions,
         "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
         "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
@@ -555,6 +562,7 @@ async def start_strategy(
             "price_tolerance": str(strategy.price_tolerance),
             "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
             "stop_loss_delay": strategy.stop_loss_delay,
+            "market_close_buffer": strategy.market_close_buffer,
             "max_open_positions": strategy.max_open_positions,
             "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
             "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
@@ -726,6 +734,7 @@ async def batch_start_strategies(
                 "price_tolerance": str(strategy.price_tolerance),
                 "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
                 "stop_loss_delay": strategy.stop_loss_delay,
+                "market_close_buffer": strategy.market_close_buffer,
                 "max_open_positions": strategy.max_open_positions,
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                 "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
@@ -745,6 +754,7 @@ async def batch_start_strategies(
                     "price_tolerance": str(strategy.price_tolerance),
                     "stop_loss": str(strategy.stop_loss) if strategy.stop_loss else None,
                     "stop_loss_delay": strategy.stop_loss_delay,
+                    "market_close_buffer": strategy.market_close_buffer,
                     "max_open_positions": strategy.max_open_positions,
                     "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                     "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,

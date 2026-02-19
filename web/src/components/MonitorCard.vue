@@ -133,6 +133,20 @@ function toFiniteNumber(value: unknown): number | null {
   return null
 }
 
+const POLYMARKET_DEFAULT_BUFFER_BY_EXCHANGE: Record<string, number> = {
+  polymarket_updown5m: 60,
+  polymarket_updown15m: 180,
+  polymarket_updown1h: 300,
+  polymarket_updown1d: 1800,
+}
+
+function resolvePolymarketDefaultBuffer(exchange: string | null | undefined): number {
+  if (!exchange) {
+    return 0
+  }
+  return POLYMARKET_DEFAULT_BUFFER_BY_EXCHANGE[exchange] ?? 0
+}
+
 const polymarketStatus = computed(() => {
   if (!props.status?.exchange?.startsWith('polymarket_updown')) {
     return null
@@ -143,6 +157,8 @@ const polymarketStatus = computed(() => {
     marketSlug: typeof extra.market_slug === 'string' ? extra.market_slug : '-',
     tokenId: typeof extra.token_id === 'string' ? extra.token_id : '',
     secondsUntilClose: toFiniteNumber(extra.seconds_until_close),
+    secondsUntilSwitch: toFiniteNumber(extra.seconds_until_switch),
+    marketCloseBuffer: toFiniteNumber(extra.market_close_buffer),
     marketEndTime: toFiniteNumber(extra.market_end_time),
     isClosing: Boolean(extra.is_closing),
   }
@@ -194,10 +210,22 @@ const polymarketTooltipText = computed(() => {
 })
 
 const polymarketSwitchSeconds = computed(() => {
+  const info = polymarketStatus.value
+  if (!info) {
+    return null
+  }
+
+  if (info.secondsUntilSwitch !== null) {
+    return Math.max(0, Math.floor(info.secondsUntilSwitch))
+  }
+
   const remaining = polymarketRemainingSeconds.value
   if (remaining === null) return null
-  const buffer = props.strategy.market_close_buffer ?? 0
-  return Math.max(0, remaining - buffer)
+  const strategyBuffer = toFiniteNumber(props.strategy.market_close_buffer)
+  const buffer = strategyBuffer
+    ?? info.marketCloseBuffer
+    ?? resolvePolymarketDefaultBuffer(props.status?.exchange)
+  return Math.max(0, remaining - Math.floor(buffer))
 })
 
 const isSwitchCritical = computed(() => {
