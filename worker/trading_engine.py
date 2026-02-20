@@ -13,9 +13,6 @@ from worker.db import TradeStore, TradeRecord
 from worker.domain import Order, OrderState, PositionTracker, RiskManager
 from worker.engine.position_syncer import PositionSyncer
 
-_logger = logging.getLogger(__name__)
-
-
 class TradingEngine:
     """交易主引擎 - 协调所有组件"""
 
@@ -41,7 +38,8 @@ class TradingEngine:
         base_prefix = exchange.log_prefix
         if strategy_id is not None:
             base_prefix = f"{base_prefix} [S#{strategy_id}]"
-        self.log = PrefixAdapter(_logger, {"prefix": base_prefix})
+        logger_name = f"{type(self).__module__}.{type(self).__name__}"
+        self.log = PrefixAdapter(logging.getLogger(logger_name), {"prefix": base_prefix})
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
