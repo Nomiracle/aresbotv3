@@ -17,6 +17,7 @@ class RedisClient:
     # Key patterns
     RUNNING_KEY_PREFIX = "strategy:running:"
     LOCK_KEY_PREFIX = "strategy:lock:"
+    SYMBOL_LOCK_KEY_PREFIX = "strategy:symbol_lock:"
     STOP_CHANNEL_PREFIX = "strategy:stop:"
     WORKERS_KEY = "workers:active"
     WORKER_INFO_PREFIX = "worker:info:"
@@ -87,6 +88,56 @@ class RedisClient:
         """Get the task_id holding the lock for a strategy."""
         lock_key = f"{self.LOCK_KEY_PREFIX}{strategy_id}"
         return self._client.get(lock_key)
+
+    @staticmethod
+    def _normalize_symbol_lock_value(value: str) -> str:
+        return str(value or "").strip().lower()
+
+    def _build_symbol_lock_key(self, user_email: str, exchange: str, symbol: str) -> str:
+        user_key = self._normalize_symbol_lock_value(user_email)
+        exchange_key = self._normalize_symbol_lock_value(exchange)
+        symbol_key = self._normalize_symbol_lock_value(symbol)
+        return f"{self.SYMBOL_LOCK_KEY_PREFIX}{user_key}:{exchange_key}:{symbol_key}"
+
+    def acquire_symbol_lock(
+        self,
+        user_email: str,
+        exchange: str,
+        symbol: str,
+        task_id: str,
+    ) -> bool:
+        """Acquire lock for user+exchange+symbol to prevent duplicated market runners."""
+        if not user_email or not exchange or not symbol or not task_id:
+            return False
+        key = self._build_symbol_lock_key(user_email, exchange, symbol)
+        return bool(self._client.set(key, task_id, nx=True, ex=self.LOCK_TTL))
+
+    def get_symbol_lock_holder(
+        self,
+        user_email: str,
+        exchange: str,
+        symbol: str,
+    ) -> Optional[str]:
+        if not user_email or not exchange or not symbol:
+            return None
+        key = self._build_symbol_lock_key(user_email, exchange, symbol)
+        return self._client.get(key)
+
+    def release_symbol_lock_if_holder(
+        self,
+        user_email: str,
+        exchange: str,
+        symbol: str,
+        task_id: str,
+    ) -> bool:
+        """Release user+exchange+symbol lock only when current task owns it."""
+        if not user_email or not exchange or not symbol or not task_id:
+            return False
+        key = self._build_symbol_lock_key(user_email, exchange, symbol)
+        current_holder = self._client.get(key)
+        if not current_holder or current_holder != task_id:
+            return False
+        return bool(self._client.delete(key))
 
     def set_running_info(
         self,

@@ -26,6 +26,7 @@ class TradingEngine:
         risk_manager: RiskManager,
         state_store: Optional[TradeStore] = None,
         sync_interval: int = 60,
+        strategy_id: Optional[int] = None,
     ):
         self.strategy = strategy
         self.exchange = exchange
@@ -37,7 +38,10 @@ class TradingEngine:
             position_tracker=self.position_tracker,
         )
 
-        self.log = PrefixAdapter(_logger, {"prefix": exchange.log_prefix})
+        base_prefix = exchange.log_prefix
+        if strategy_id is not None:
+            base_prefix = f"{base_prefix} [S#{strategy_id}]"
+        self.log = PrefixAdapter(_logger, {"prefix": base_prefix})
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}

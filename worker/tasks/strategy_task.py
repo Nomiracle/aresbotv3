@@ -220,10 +220,24 @@ def _is_task_active(task_id: str) -> bool:
         return False
 
     inspect = app.control.inspect()
+    try:
+        active = inspect.active()
+        reserved = inspect.reserved()
+        scheduled = inspect.scheduled()
+    except Exception as err:
+        logger.warning("inspect task state failed, skip stale-lock cleanup: %s", err)
+        return True
+
+    # Inspect can transiently return all None even when cluster is healthy.
+    # Treat it as unknown to avoid releasing a valid lock by mistake.
+    if active is None and reserved is None and scheduled is None:
+        logger.warning("inspect task state unavailable, skip stale-lock cleanup")
+        return True
+
     states = [
-        inspect.active() or {},
-        inspect.reserved() or {},
-        inspect.scheduled() or {},
+        active or {},
+        reserved or {},
+        scheduled or {},
     ]
 
     for payload in states:
@@ -286,6 +300,11 @@ def run_strategy(
     previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
 
     redis_client = get_redis_client()
+    runtime_data = strategy_runtime or {}
+    user_email = runtime_data.get("user_email", "")
+    exchange_name = str(account_data.get("exchange") or "").strip().lower()
+    symbol = str(strategy_config.get("symbol") or "").strip()
+    symbol_lock_acquired = False
 
     # 1. Try to acquire distributed lock
     if not redis_client.acquire_lock(runtime.strategy_id, runtime.task_id):
@@ -322,9 +341,36 @@ def run_strategy(
                 "existing_task_id": existing_task,
             }
 
-    # 2. Save running instance info to Redis
-    runtime_data = strategy_runtime or {}
+    # 1.1 Try to acquire user+exchange+symbol lock to avoid duplicated market runners
+    if user_email and exchange_name and symbol:
+        symbol_lock_acquired = redis_client.acquire_symbol_lock(
+            user_email=user_email,
+            exchange=exchange_name,
+            symbol=symbol,
+            task_id=runtime.task_id,
+        )
+        if not symbol_lock_acquired:
+            existing_symbol_task = redis_client.get_symbol_lock_holder(
+                user_email=user_email,
+                exchange=exchange_name,
+                symbol=symbol,
+            )
+            logger.info(
+                "Skip duplicate start for user=%s exchange=%s symbol=%s holder=%s",
+                user_email,
+                exchange_name,
+                symbol,
+                existing_symbol_task,
+            )
+            _cleanup_runtime(redis_client, runtime.strategy_id, runtime.task_id)
+            return {
+                "strategy_id": runtime.strategy_id,
+                "task_id": runtime.task_id,
+                "status": "skipped_symbol_already_running",
+                "existing_task_id": existing_symbol_task,
+            }
 
+    # 2. Save running instance info to Redis
     redis_client.set_running_info(
         strategy_id=runtime.strategy_id,
         task_id=runtime.task_id,
@@ -422,6 +468,13 @@ def run_strategy(
                 logger.warning(f"Strategy {strategy_id} engine.stop() failed: {err}")
 
         # 5. Cleanup Redis
+        if symbol_lock_acquired:
+            redis_client.release_symbol_lock_if_holder(
+                user_email=user_email,
+                exchange=exchange_name,
+                symbol=symbol,
+                task_id=runtime.task_id,
+            )
         _cleanup_runtime(redis_client, strategy_id, runtime.task_id)
         logger.info(f"Strategy {strategy_id} stopped and cleaned up")
 
@@ -600,6 +653,7 @@ def _create_engine(
             risk_manager=risk_manager,
             state_store=state_store,
             sync_interval=60,
+            strategy_id=strategy_id,
         )
     elif exchange_name in ("polymarket_updown15m", "polymarket_updown5m", "polymarket_updown1h", "polymarket_updown1d"):
         engine = PolymarketTradingEngine(
@@ -608,6 +662,7 @@ def _create_engine(
             risk_manager=risk_manager,
             state_store=state_store,
             sync_interval=60,
+            strategy_id=strategy_id,
         )
     else:
         engine = TradingEngine(
@@ -616,6 +671,7 @@ def _create_engine(
             risk_manager=risk_manager,
             state_store=state_store,
             sync_interval=60,
+            strategy_id=strategy_id,
         )
 
     # Set up status update callback
