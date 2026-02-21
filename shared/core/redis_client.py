@@ -152,6 +152,7 @@ class RedisClient:
         user_email: Optional[str] = None,
         strategy_snapshot: Optional[Dict[str, Any]] = None,
         runtime_config: Optional[Dict[str, Any]] = None,
+        worker_version: str = "",
     ) -> None:
         """Set the running information for a strategy."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
@@ -196,6 +197,7 @@ class RedisClient:
             "last_error": "",
             "stop_requested_at": 0,
             "updated_at": now,
+            "worker_version": worker_version,
         })
 
     def get_strategy_stop_channel(self, strategy_id: int) -> str:
@@ -420,6 +422,7 @@ class RedisClient:
             "last_error": info.get("last_error", ""),
             "stop_requested_at": int(info.get("stop_requested_at", 0) or 0),
             "updated_at": int(info.get("updated_at", 0)),
+            "worker_version": info.get("worker_version", ""),
         }
 
     def clear_running_info(self, strategy_id: int) -> None:
@@ -482,10 +485,11 @@ class RedisClient:
         private_ip: str = "",
         public_ip: str = "",
         ip_location: str = "",
+        version: str = "",
     ) -> None:
         """Register a worker as active with its info."""
         self._client.sadd(self.WORKERS_KEY, worker_id)
-        if ip or hostname or private_ip or public_ip or ip_location:
+        if ip or hostname or private_ip or public_ip or ip_location or version:
             key = f"{self.WORKER_INFO_PREFIX}{worker_id}"
             self._client.hset(key, mapping={
                 "ip": ip,
@@ -493,6 +497,7 @@ class RedisClient:
                 "private_ip": private_ip,
                 "public_ip": public_ip,
                 "ip_location": ip_location,
+                "version": version,
                 "registered_at": int(time.time()),
             })
             self._client.expire(key, 86400)  # 24 hours TTL

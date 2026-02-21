@@ -19,6 +19,7 @@ from shared.exchanges import FUTURES_EXCHANGE_IDS
 from shared.utils.crypto import decrypt_api_secret
 from shared.utils.logger import get_logger
 from shared.utils.network import get_worker_network_identity
+from shared.utils.version import get_worker_version
 from worker.db import TradeStore
 from worker.domain.risk_manager import RiskManager, RiskConfig
 from worker.trading_engine import TradingEngine
@@ -390,6 +391,7 @@ def run_strategy(
         user_email=runtime_data.get("user_email"),
         strategy_snapshot=runtime_snapshot,
         runtime_config=runtime_data.get("runtime_config", effective_strategy_config),
+        worker_version=get_worker_version(),
     )
 
     logger.info(

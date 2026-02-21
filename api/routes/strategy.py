@@ -143,6 +143,7 @@ class RunningStrategyResponse(BaseModel):
     started_at: int
     updated_at: int
     last_error: Optional[str] = None
+    worker_version: str = ""
 
 
 def strategy_to_response(strategy: Strategy) -> StrategyResponse:
@@ -427,6 +428,7 @@ async def get_running_strategies(
             started_at=info["started_at"],
             updated_at=info["updated_at"],
             last_error=info.get("last_error") or None,
+            worker_version=info.get("worker_version", ""),
         )
         for info in running
     ]

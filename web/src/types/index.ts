@@ -100,6 +100,7 @@ export interface StrategyStatus {
   last_error?: string
   error_count?: number
   extra_status?: Record<string, unknown>
+  worker_version?: string
 }
 
 export interface RunningStrategy {
@@ -138,6 +139,7 @@ export interface RunningStrategy {
   updated_at: number
   last_error?: string | null
   extra_status?: Record<string, unknown>
+  worker_version?: string
 }
 
 export interface Trade {

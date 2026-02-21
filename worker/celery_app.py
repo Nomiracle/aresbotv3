@@ -147,9 +147,11 @@ def on_after_setup_task_logger(logger, *args, **kwargs):
 def on_worker_ready(sender, **kwargs):
     """Register worker when it's ready."""
     from shared.core.redis_client import get_redis_client
+    from shared.utils.version import get_worker_version
 
     worker_name = os.environ.get("WORKER_NAME") or sender.hostname
     identity = get_worker_network_identity(force_refresh=True)
+    version = get_worker_version()
 
     redis_client = get_redis_client()
     redis_client.register_worker(
@@ -159,9 +161,11 @@ def on_worker_ready(sender, **kwargs):
         private_ip=identity.private_ip,
         public_ip=identity.public_ip,
         ip_location=identity.ip_location,
+        version=version,
     )
     print(
         f"Worker {worker_name} registered: "
+        f"version={version} "
         f"egress={identity.public_ip or '-'} private={identity.private_ip or '-'} "
         f"location={identity.ip_location or '-'}"
     )

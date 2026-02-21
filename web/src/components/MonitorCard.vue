@@ -439,6 +439,10 @@ onUnmounted(() => {
       <span :class="['ws-tag', wsEnabled ? 'ws-on' : 'ws-off']">
         {{ wsEnabled ? 'WS' : 'REST' }}
       </span>
+      <template v-if="status?.worker_version">
+        <span class="separator">|</span>
+        <span class="version-tag">{{ status.worker_version }}</span>
+      </template>
     </div>
 
     <div v-if="isRunning && polymarketStatus" class="exchange-row">
@@ -720,6 +724,12 @@ onUnmounted(() => {
 .ws-tag.ws-off {
   color: #909399;
   background: #f4f4f5;
+}
+
+.version-tag {
+  font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  color: #909399;
 }
 
 .separator {

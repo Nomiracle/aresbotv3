@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
     volumes:
       - ${WORKER_DATA_DIR:-/app/data/aresbotWorker}:/app/data/worker
       - ${WORKER_LOG_DIR:-/app/data/aresbotWorker/logs}:/app/logs
