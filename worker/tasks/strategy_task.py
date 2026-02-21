@@ -301,9 +301,16 @@ def run_strategy(
 
     redis_client = get_redis_client()
     runtime_data = strategy_runtime or {}
+    runtime_snapshot = runtime_data.get("strategy_snapshot") or {}
+    effective_strategy_config = dict(strategy_config)
+    if not effective_strategy_config.get("strategy_type"):
+        snapshot_strategy_type = runtime_snapshot.get("strategy_type")
+        if snapshot_strategy_type:
+            effective_strategy_config["strategy_type"] = str(snapshot_strategy_type)
+
     user_email = runtime_data.get("user_email", "")
     exchange_name = str(account_data.get("exchange") or "").strip().lower()
-    symbol = str(strategy_config.get("symbol") or "").strip()
+    symbol = str(effective_strategy_config.get("symbol") or "").strip()
     symbol_lock_acquired = False
 
     # 1. Try to acquire distributed lock
@@ -381,8 +388,8 @@ def run_strategy(
         worker_ip_location=runtime.worker_ip_location,
         status="running",
         user_email=runtime_data.get("user_email"),
-        strategy_snapshot=runtime_data.get("strategy_snapshot", {}),
-        runtime_config=runtime_data.get("runtime_config", strategy_config),
+        strategy_snapshot=runtime_snapshot,
+        runtime_config=runtime_data.get("runtime_config", effective_strategy_config),
     )
 
     logger.info(
@@ -402,7 +409,7 @@ def run_strategy(
         engine = _create_engine(
             strategy_id=runtime.strategy_id,
             account_data=account_data,
-            strategy_config=strategy_config,
+            strategy_config=effective_strategy_config,
             redis_client=redis_client,
             user_email=user_email,
         )
@@ -425,7 +432,7 @@ def run_strategy(
         if is_main_thread:
             signal.signal(signal.SIGTERM, _handle_sigterm)
 
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_started", "策略已启动", account_data.get("exchange", ""))
+        _send_lifecycle_notify(user_email, strategy_id, effective_strategy_config.get("symbol", ""), "strategy_started", "策略已启动", account_data.get("exchange", ""))
         engine.start()
 
         if is_main_thread:
@@ -445,7 +452,7 @@ def run_strategy(
             status="error",
             last_error=str(e),
         )
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_error", f"策略异常: {e}", account_data.get("exchange", ""))
+        _send_lifecycle_notify(user_email, strategy_id, effective_strategy_config.get("symbol", ""), "strategy_error", f"策略异常: {e}", account_data.get("exchange", ""))
         raise
 
     finally:
@@ -458,7 +465,7 @@ def run_strategy(
         if stop_watcher:
             stop_watcher.stop()
 
-        _send_lifecycle_notify(user_email, strategy_id, strategy_config.get("symbol", ""), "strategy_stopped", "策略已停止", account_data.get("exchange", ""))
+        _send_lifecycle_notify(user_email, strategy_id, effective_strategy_config.get("symbol", ""), "strategy_stopped", "策略已停止", account_data.get("exchange", ""))
 
         # 4. Stop engine (cancel orders + close exchange)
         if engine:

@@ -618,6 +618,29 @@ class BilateralTradingEngine(TradingEngine):
 
         exchange_info = self.exchange.get_exchange_info() or {}
         exchange_id = str(exchange_info.get("id") or "unknown")
+        strategy_extra: dict = {}
+        try:
+            strategy_extra = self.strategy.get_status_extra(
+                current_price=self._current_price,
+                pending_buy_orders=pending_buys_snapshot,
+                pending_sell_orders=pending_sells_snapshot,
+            )
+        except Exception as err:
+            self.log.debug("获取策略扩展状态失败: %s", err)
+
+        exchange_extra: dict = {}
+        try:
+            exchange_extra = self.exchange.get_status_extra()
+        except Exception as err:
+            self.log.debug("获取交易所扩展状态失败: %s", err)
+
+        extra_status = {
+            **(strategy_extra or {}),
+            **(exchange_extra or {}),
+            "short_open_count": len(short_opens_snapshot),
+            "short_close_count": len(short_closes_snapshot),
+            "short_position_count": short_position_count,
+        }
 
         status = {
             "exchange": exchange_id,
@@ -628,11 +651,7 @@ class BilateralTradingEngine(TradingEngine):
             "buy_orders": all_buy_orders,
             "sell_orders": all_sell_orders,
             "last_error": self._last_error,
-            "extra_status": {
-                "short_open_count": len(short_opens_snapshot),
-                "short_close_count": len(short_closes_snapshot),
-                "short_position_count": short_position_count,
-            },
+            "extra_status": extra_status,
         }
 
         try:

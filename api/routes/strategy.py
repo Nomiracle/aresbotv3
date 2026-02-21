@@ -726,6 +726,7 @@ async def batch_start_strategies(
             }
             strategy_config = {
                 "symbol": strategy.symbol,
+                "strategy_type": getattr(strategy, "strategy_type", "grid"),
                 "base_order_size": str(strategy.base_order_size),
                 "buy_price_deviation": str(strategy.buy_price_deviation),
                 "sell_price_deviation": str(strategy.sell_price_deviation),
