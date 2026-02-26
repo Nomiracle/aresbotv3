@@ -362,7 +362,14 @@ watch(strategyPickerVisible, async visible => {
             >{{ getExchangeLabel(row.exchange) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="symbol" label="交易对" min-width="100" />
+        <el-table-column prop="symbol" label="交易对" min-width="100">
+          <template #default="{ row }">
+            <span
+              class="symbol-badge"
+              :style="{ color: exchangeColor(row.symbol), backgroundColor: exchangeBgColor(row.symbol) }"
+            >{{ row.symbol }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="side" label="方向" min-width="70">
           <template #default="{ row }">
             <el-tag :type="row.side === 'BUY' ? 'success' : 'danger'" size="small">
@@ -616,7 +623,8 @@ watch(strategyPickerVisible, async visible => {
   align-items: center;
 }
 
-.exchange-badge {
+.exchange-badge,
+.symbol-badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;

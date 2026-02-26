@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Trade } from '@/types'
+import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
 
 defineProps<{
   trades: Trade[]
@@ -18,7 +19,14 @@ function formatTime(dateStr: string) {
         {{ formatTime(row.created_at) }}
       </template>
     </el-table-column>
-    <el-table-column prop="symbol" label="交易对" width="100" />
+    <el-table-column prop="symbol" label="交易对" width="100">
+      <template #default="{ row }">
+        <span
+          class="symbol-badge"
+          :style="{ color: exchangeColor(row.symbol), backgroundColor: exchangeBgColor(row.symbol) }"
+        >{{ row.symbol }}</span>
+      </template>
+    </el-table-column>
     <el-table-column prop="side" label="方向" width="80">
       <template #default="{ row }">
         <el-tag :type="row.side === 'BUY' ? 'success' : 'danger'" size="small">
@@ -46,5 +54,14 @@ function formatTime(dateStr: string) {
 }
 .negative {
   color: #f56c6c;
+}
+.symbol-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 </style>
