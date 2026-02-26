@@ -424,11 +424,60 @@ class TradingEngine:
                     if not all_suppressed:
                         self._emit_notify("order_failed", "🔴卖单下单失败", latest_order_error)
 
+            # 反向对账：认领交易所上存在但本地未跟踪的订单
+            self._reconcile_untracked_orders(exchange_order_map)
+
         except Exception as e:
             self.log.warning("同步订单失败: %s", e, exc_info=True)
             self._last_error = f"同步订单失败: {e}"
             self._last_error_time = time.time()
             self._update_status(force=True, source="sync_orders_failed")
+
+    def _reconcile_untracked_orders(
+        self, exchange_order_map: Dict[str, Any],
+    ) -> None:
+        """反向对账：认领交易所上存在但本地未跟踪的订单。
+
+        场景：post_orders 服务端已下单成功，但客户端因网络异常未收到响应，
+        导致订单未被引擎跟踪。如果不认领，成交后无法下对应卖单。
+        """
+        with self._lock:
+            tracked_ids = set(self._pending_buys) | set(self._pending_sells)
+
+        adopted = 0
+        for order_id, ex_order in exchange_order_map.items():
+            if order_id in tracked_ids:
+                continue
+
+            side = ex_order.side.lower()
+            order = Order(
+                order_id=order_id,
+                symbol=ex_order.symbol or self.strategy.config.symbol,
+                side=side,
+                price=ex_order.price,
+                quantity=ex_order.quantity,
+                grid_index=0,
+                state=OrderState.PLACED,
+            )
+
+            with self._lock:
+                if side == "buy":
+                    self._pending_buys[order_id] = order
+                else:
+                    self._pending_sells[order_id] = order
+
+            adopted += 1
+            self.log.warning(
+                "认领未跟踪订单: %s side=%s price=%s qty=%s",
+                order_id, side, ex_order.price, ex_order.quantity,
+            )
+
+        if adopted:
+            self._emit_notify(
+                "order_reconciled",
+                f"🔄认领{adopted}笔未跟踪订单",
+                "可能由网络异常导致订单未被引擎记录",
+            )
 
     def _check_new_orders(self) -> None:
         """检查是否需要下新单（批量）"""
