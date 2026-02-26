@@ -68,6 +68,7 @@ class ExchangeFutures(ExchangeSpot):
                 return False
 
         if _try_set():
+            self._hedge_mode = True
             return
 
         # 首次失败（通常 -4068：存在挂单/持仓），取消当前 symbol 挂单后重试
@@ -88,6 +89,7 @@ class ExchangeFutures(ExchangeSpot):
             logger.warning("%s 清理挂单失败: %s", self._log_prefix, err)
 
         if _try_set():
+            self._hedge_mode = True
             return
 
         raise RuntimeError(
