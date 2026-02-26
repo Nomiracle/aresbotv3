@@ -433,8 +433,10 @@ class RedisClient:
     def clear_running_info_if_task(self, strategy_id: int, task_id: str) -> bool:
         """Clear runtime info only when the provided task still owns it."""
         key = f"{self.RUNNING_KEY_PREFIX}{strategy_id}"
-        current_task_id = self._client.hget(key, "task_id")
+        current_task_id, current_status = self._client.hmget(key, ["task_id", "status"])
         if not current_task_id or current_task_id != task_id:
+            return False
+        if current_status == "running":
             return False
         return bool(self._client.delete(key))
 

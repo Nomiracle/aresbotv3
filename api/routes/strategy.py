@@ -1,7 +1,7 @@
 """Strategy management routes."""
 import asyncio
 from decimal import Decimal
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -701,6 +701,36 @@ async def batch_update_strategies(
     return BatchResult(success=success, failed=failed)
 
 
+def _validate_worker_from_cache(
+    worker_name: Optional[str],
+    workers: List[Dict],
+) -> None:
+    """Validate worker availability and capacity using a pre-fetched worker list."""
+    if not worker_name:
+        return
+
+    worker_names = {w["name"] for w in workers}
+    if worker_name not in worker_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"指定 Worker 不在线: {worker_name}",
+        )
+
+    for w in workers:
+        if w["name"] == worker_name:
+            concurrency = int(w.get("concurrency") or 0)
+            active = int(w.get("active_tasks") or 0)
+            if concurrency > 0 and active >= concurrency:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Worker {worker_name} 已满载（{active}/{concurrency}），"
+                        f"请先停止该节点上的某个策略，或将此策略分配到其他 Worker 节点"
+                    ),
+                )
+            return
+
+
 @router.post("/batch/start", response_model=BatchResult)
 async def batch_start_strategies(
     data: BatchRequest,
@@ -709,6 +739,7 @@ async def batch_start_strategies(
 ):
     """Batch start multiple strategies."""
     success, failed = [], []
+    workers = await asyncio.to_thread(get_active_workers)
     for sid in data.strategy_ids:
         try:
             strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
@@ -742,7 +773,7 @@ async def batch_start_strategies(
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                 "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
             }
-            await asyncio.to_thread(_validate_worker, strategy.worker_name)
+            _validate_worker_from_cache(strategy.worker_name, workers)
             strategy_runtime = {
                 "user_email": user_email,
                 "strategy_snapshot": {
