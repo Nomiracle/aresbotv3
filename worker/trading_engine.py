@@ -511,11 +511,27 @@ class TradingEngine:
             )
             return
 
-        # 兜底校验：查询交易所实际挂单数，防止改价丢失订单导致重复下单
+        # 兜底校验：查询交易所实际挂单，防止改价丢失订单导致重复下单
         try:
             exchange_open = self.exchange.get_open_orders()
             exchange_buy_count = sum(1 for o in exchange_open if o.side.lower() == "buy")
             max_buy_orders = self.strategy.config.order_grid
+
+            # 价格去重：过滤掉交易所已有相同价格的买单
+            existing_buy_prices = {
+                round(o.price, 6) for o in exchange_open if o.side.lower() == "buy"
+            }
+            before = len(decisions)
+            decisions = [
+                d for d in decisions
+                if round(self.exchange.align_price(d.price, self._rules), 6) not in existing_buy_prices
+            ]
+            if len(decisions) < before:
+                self.log.warning(
+                    "价格去重: 过滤%s笔与交易所重复价格的买单",
+                    before - len(decisions),
+                )
+
             if exchange_buy_count + len(decisions) > max_buy_orders:
                 allowed = max(0, max_buy_orders - exchange_buy_count)
                 self.log.warning(
