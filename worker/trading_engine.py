@@ -769,12 +769,13 @@ class TradingEngine:
                 old_order = order_map[idx]
                 new_price = edit_requests[idx].price
 
-                if old_order.side == 'buy':
-                    self._pending_buys.pop(old_order.order_id, None)
-                else:
-                    self._pending_sells.pop(old_order.order_id, None)
-
                 if result.success and result.order_id:
+                    # 改价成功：移除旧订单，添加新订单
+                    if old_order.side == 'buy':
+                        self._pending_buys.pop(old_order.order_id, None)
+                    else:
+                        self._pending_sells.pop(old_order.order_id, None)
+
                     new_order = Order(
                         order_id=result.order_id,
                         symbol=old_order.symbol,
@@ -792,8 +793,10 @@ class TradingEngine:
 
                     self.log.info("订单改价成功 [%s]: %s -> %s, 新价格=%s", old_order.side, old_order.order_id, result.order_id, new_price)
                 else:
+                    # 改价失败：保留旧订单跟踪，防止网格空位导致重复下单
+                    # 若旧订单已被交易所取消，下一轮 _sync_orders 会自然清理
                     self.log.warning(
-                        "订单改价失败 [%s] old=%s error=%s, 网格位置已丢失将在下一轮补单",
+                        "订单改价失败 [%s] old=%s error=%s, 保留旧订单跟踪等待下轮同步",
                         old_order.side, old_order.order_id, result.error,
                     )
 
