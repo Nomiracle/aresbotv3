@@ -23,7 +23,7 @@ _DEFAULT_MARKET_CLOSE_BUFFER = 60
 class PolymarketUpDown5m(PolymarketUpDown15m):
     """Polymarket 5m UpDown market (BTC only)."""
 
-    _SUPPORTED_MARKETS = ("btc",)
+    _SUPPORTED_MARKETS = ("btc", "eth", "sol", "xrp")
 
     def __init__(
         self,
