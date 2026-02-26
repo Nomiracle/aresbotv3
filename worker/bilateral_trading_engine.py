@@ -70,6 +70,23 @@ class BilateralTradingEngine(TradingEngine):
         if not decisions:
             return
 
+        # 兜底校验：查询交易所实际挂单数，防止改价丢失订单导致重复下单
+        try:
+            exchange_open = self.exchange.get_open_orders()
+            exchange_buy_count = sum(1 for o in exchange_open if o.side.lower() == "buy")
+            max_buy_orders = self.strategy.config.order_grid
+            if exchange_buy_count + len(decisions) > max_buy_orders:
+                allowed = max(0, max_buy_orders - exchange_buy_count)
+                self.log.warning(
+                    "交易所做多买单=%s + 新单=%s > 网格数=%s, 截断为%s",
+                    exchange_buy_count, len(decisions), max_buy_orders, allowed,
+                )
+                if allowed == 0:
+                    return
+                decisions = decisions[:allowed]
+        except Exception as e:
+            self.log.debug("兜底校验查询挂单失败: %s", e)
+
         rules = self._rules
         order_requests: list[OrderRequest] = []
         decision_map: list = []
@@ -128,6 +145,23 @@ class BilateralTradingEngine(TradingEngine):
         )
         if not decisions:
             return
+
+        # 兜底校验：查询交易所实际挂单数，防止改价丢失订单导致重复下单
+        try:
+            exchange_open = self.exchange.get_open_orders()
+            exchange_sell_count = sum(1 for o in exchange_open if o.side.lower() == "sell")
+            max_sell_orders = self.strategy.config.order_grid
+            if exchange_sell_count + len(decisions) > max_sell_orders:
+                allowed = max(0, max_sell_orders - exchange_sell_count)
+                self.log.warning(
+                    "交易所做空卖单=%s + 新单=%s > 网格数=%s, 截断为%s",
+                    exchange_sell_count, len(decisions), max_sell_orders, allowed,
+                )
+                if allowed == 0:
+                    return
+                decisions = decisions[:allowed]
+        except Exception as e:
+            self.log.debug("兜底校验查询挂单失败: %s", e)
 
         rules = self._rules
         order_requests: list[OrderRequest] = []
