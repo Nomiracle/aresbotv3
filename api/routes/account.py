@@ -18,7 +18,7 @@ from api.deps import get_current_user, get_db_session
 from api.db.crud import AccountCRUD
 from api.db.models import ExchangeAccount
 from shared.core.redis_client import get_redis_client
-from shared.exchanges import FUTURES_EXCHANGE_IDS
+from shared.exchanges import FUTURES_EXCHANGE_IDS, get_polymarket_symbols, POLYMARKET_UPDOWN_5M_MARKETS, POLYMARKET_UPDOWN_15M_MARKETS, POLYMARKET_UPDOWN_1H_MARKETS, POLYMARKET_UPDOWN_1D_MARKETS
 from shared.utils.crypto import decrypt_api_secret, encrypt_api_secret
 
 router = APIRouter()
@@ -32,26 +32,19 @@ DEFAULT_SUPPORTED_EXCHANGES = ("binance", *INTERNAL_SUPPORTED_EXCHANGES)
 
 
 def _get_polymarket_updown15m_symbols() -> List[str]:
-    markets = ("btc", "eth", "sol", "xrp")
-    outcomes = ("Up", "Down")
-    return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
+    return get_polymarket_symbols(POLYMARKET_UPDOWN_15M_MARKETS)
 
 
 def _get_polymarket_updown5m_symbols() -> List[str]:
-    outcomes = ("Up", "Down")
-    return [f"btc-{outcome}" for outcome in outcomes]
+    return get_polymarket_symbols(POLYMARKET_UPDOWN_5M_MARKETS)
 
 
 def _get_polymarket_updown1h_symbols() -> List[str]:
-    markets = ("btc", "eth", "sol", "xrp")
-    outcomes = ("Up", "Down")
-    return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
+    return get_polymarket_symbols(POLYMARKET_UPDOWN_1H_MARKETS)
 
 
 def _get_polymarket_updown1d_symbols() -> List[str]:
-    markets = ("btc", "eth", "sol", "xrp")
-    outcomes = ("Up", "Down")
-    return [f"{market}-{outcome}" for market in markets for outcome in outcomes]
+    return get_polymarket_symbols(POLYMARKET_UPDOWN_1D_MARKETS)
 
 EXCHANGE_LABEL_OVERRIDES = {
     "okx": "OKX",

@@ -15,6 +15,7 @@ from worker.exchanges.polymarket_updown15m import (
     _safe_json_list,
     _select_token_id,
 )
+from shared.exchanges import POLYMARKET_UPDOWN_5M_MARKETS
 
 _MARKET_PERIOD_SECONDS = 5 * 60
 _DEFAULT_MARKET_CLOSE_BUFFER = 60
@@ -23,7 +24,7 @@ _DEFAULT_MARKET_CLOSE_BUFFER = 60
 class PolymarketUpDown5m(PolymarketUpDown15m):
     """Polymarket 5m UpDown market (BTC only)."""
 
-    _SUPPORTED_MARKETS = ("btc", "eth", "sol", "xrp")
+    _SUPPORTED_MARKETS = POLYMARKET_UPDOWN_5M_MARKETS
 
     def __init__(
         self,
