@@ -132,103 +132,52 @@ class BaseExchange(ABC):
         pass
 
     def edit_batch_orders(self, edits: List[EditOrderRequest]) -> List[OrderResult]:
-        """批量改单，默认实现：cancel + recreate + 失败重试/对账，子类可覆写"""
+        """批量改单，默认实现：cancel + recreate，子类可覆写"""
         if not edits:
             return []
 
         cancel_ids = [e.order_id for e in edits]
         cancel_results = self.cancel_batch_orders(cancel_ids)
 
-        cancelled_set = {
-            r.order_id for r in cancel_results if r.success and r.order_id
-        }
-
-        new_orders = [
-            OrderRequest(side=e.side, price=e.price, quantity=e.quantity)
-            for e in edits
-            if e.order_id in cancelled_set
-        ]
-        if not new_orders:
-            return [
-                OrderResult(success=False, order_id=e.order_id, status=OrderStatus.FAILED, error="cancel failed")
-                for e in edits
-            ]
-
-        place_results = self.place_batch_orders(new_orders)
-
-        # 对失败的下单重试一次 (处理瞬时网络错误)
-        retry_indices = [
-            i for i, r in enumerate(place_results) if not r.success
-        ]
-        if retry_indices:
-            retry_orders = [new_orders[i] for i in retry_indices]
-            retry_results = self.place_batch_orders(retry_orders)
-            for j, idx in enumerate(retry_indices):
-                if j < len(retry_results) and retry_results[j].success:
-                    place_results[idx] = retry_results[j]
-
-        # 重试后仍失败的，对账查询交易所确认是否实际成功
-        still_failed = [
-            i for i, r in enumerate(place_results) if not r.success
-        ]
-        if still_failed:
-            matched = self._reconcile_failed_placements(
-                [new_orders[i] for i in still_failed],
-            )
-            for j, idx in enumerate(still_failed):
-                if j < len(matched) and matched[j] is not None:
-                    place_results[idx] = matched[j]
-
         results: List[OrderResult] = []
-        place_idx = 0
-        for edit in edits:
-            if edit.order_id in cancelled_set:
-                if place_idx < len(place_results):
-                    results.append(place_results[place_idx])
-                    place_idx += 1
-                else:
-                    results.append(OrderResult(success=False, order_id=None, status=OrderStatus.FAILED, error="no place result"))
+        place_orders: List[OrderRequest] = []
+        place_indices: List[int] = []
+
+        for i, edit in enumerate(edits):
+            cr = cancel_results[i] if i < len(cancel_results) else None
+            if cr and cr.success:
+                place_orders.append(OrderRequest(side=edit.side, price=edit.price, quantity=edit.quantity))
+                place_indices.append(i)
             else:
-                results.append(OrderResult(success=False, order_id=edit.order_id, status=OrderStatus.FAILED, error="cancel failed"))
+                error = cr.error if cr else "cancel failed"
+                results.append(OrderResult(
+                    success=False, order_id=edit.order_id,
+                    status=OrderStatus.FAILED, error=f"cancel failed: {error}",
+                ))
 
-        return results
-
-    def _reconcile_failed_placements(
-        self, failed_orders: List[OrderRequest],
-    ) -> List[Optional[OrderResult]]:
-        """对账：查询交易所挂单，尝试匹配失败的下单请求。
-
-        按 (side, price) 匹配，找到则视为下单实际成功。
-        """
-        results: List[Optional[OrderResult]] = [None] * len(failed_orders)
-        try:
-            open_orders = self.get_open_orders()
-        except Exception:
+        if not place_orders:
             return results
 
-        # 按 (side, price) 索引交易所挂单
-        candidates: Dict[tuple, List[ExchangeOrder]] = {}
-        for o in open_orders:
-            key = (o.side.lower(), round(o.price, 8))
-            candidates.setdefault(key, []).append(o)
+        place_results = self.place_batch_orders(place_orders)
 
-        for i, req in enumerate(failed_orders):
-            key = (req.side.lower(), round(req.price, 8))
-            matched_list = candidates.get(key)
-            if matched_list:
-                matched = matched_list.pop(0)
-                results[i] = OrderResult(
-                    success=True,
-                    order_id=matched.order_id,
-                    status=OrderStatus.PLACED,
-                    filled_price=matched.price,
-                    filled_quantity=matched.quantity,
+        # 按原始顺序组装结果
+        final: List[OrderResult] = [None] * len(edits)  # type: ignore[list-item]
+        place_idx = 0
+        for i, edit in enumerate(edits):
+            cr = cancel_results[i] if i < len(cancel_results) else None
+            if cr and cr.success:
+                final[i] = place_results[place_idx] if place_idx < len(place_results) else OrderResult(
+                    success=False, order_id=None, status=OrderStatus.FAILED, error="no place result",
                 )
-                logger.info(
-                    "reconcile: matched failed placement side=%s price=%s -> order_id=%s",
-                    req.side, req.price, matched.order_id,
+                place_idx += 1
+            else:
+                error = cr.error if cr else "cancel failed"
+                final[i] = OrderResult(
+                    success=False, order_id=edit.order_id,
+                    status=OrderStatus.FAILED, error=f"cancel failed: {error}",
                 )
-        return results
+
+        return final
 
     @abstractmethod
     def get_order(self, order_id: str) -> Optional[ExchangeOrder]:
