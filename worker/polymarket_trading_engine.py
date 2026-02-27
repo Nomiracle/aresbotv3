@@ -18,6 +18,20 @@ class PolymarketTradingEngine(TradingEngine):
 
     def _reset_trading_state(self, liquidation_result: Optional[Dict[str, Any]] = None) -> None:
         """清空所有挂单跟踪和持仓记录，清算持仓入库."""
+        # 按 order_id 逐单取消，防止 cancel_market_orders 漏取消
+        with self._lock:
+            order_ids = [*self._pending_buys.keys(), *self._pending_sells.keys()]
+        if order_ids:
+            try:
+                results = self.exchange.cancel_batch_orders(order_ids)
+                canceled = sum(1 for r in results if r.success)
+                self.log.info(
+                    "市场切换: 按ID取消挂单 total=%d canceled=%d",
+                    len(order_ids), canceled,
+                )
+            except Exception as e:
+                self.log.warning("市场切换: 按ID取消挂单失败: %s", e)
+
         # 清空前先为所有持仓生成卖出记录
         if liquidation_result and self.state_store:
             positions = self.position_tracker.get_all_positions()
