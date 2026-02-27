@@ -45,6 +45,7 @@ class TradingEngine:
         self._pending_sells: Dict[str, Order] = {}
         self._stop_loss_triggered: deque[str] = deque(maxlen=1000)
         self._processed_sell_ids: deque[str] = deque(maxlen=1000)
+        self._replaced_order_ids: deque[str] = deque(maxlen=500)
         self._lock = threading.Lock()
 
         self._running = False
@@ -443,10 +444,14 @@ class TradingEngine:
         """
         with self._lock:
             tracked_ids = set(self._pending_buys) | set(self._pending_sells)
+            replaced_ids = set(self._replaced_order_ids)
 
         adopted = 0
         for order_id, ex_order in exchange_order_map.items():
             if order_id in tracked_ids:
+                continue
+            if order_id in replaced_ids:
+                self.log.debug("跳过已替换的旧订单: %s", order_id)
                 continue
 
             side = ex_order.side.lower()
@@ -808,6 +813,7 @@ class TradingEngine:
                         self._pending_sells[result.order_id] = new_order
 
                     self.log.info("订单改价成功 [%s]: %s -> %s, 新价格=%s", old_order.side, old_order.order_id, result.order_id, new_price)
+                    self._replaced_order_ids.append(old_order.order_id)
                 else:
                     # 改价失败：保留旧订单跟踪，防止网格空位导致重复下单
                     # 若旧订单已被交易所取消，下一轮 _sync_orders 会自然清理
