@@ -601,6 +601,10 @@ class PolymarketStreamManager(StreamManager):
             )
             with self._lock:
                 self._orders[order_id] = order
+            logger.info(
+                "%s order_placed id=%s side=%s price=%s qty=%s",
+                self._log_prefix, order_id, side, price, original_size,
+            )
 
         elif order_type == "UPDATE":
             self._stats_order_msgs += 1
@@ -614,8 +618,16 @@ class PolymarketStreamManager(StreamManager):
                 )
             elif size_matched > 0:
                 status = OrderStatus.PARTIALLY_FILLED
+                logger.info(
+                    "%s order_partial_fill(UPDATE) id=%s side=%s price=%s matched=%s/%s",
+                    self._log_prefix, order_id, side, price, size_matched, original_size,
+                )
             else:
                 status = OrderStatus.PLACED
+                logger.debug(
+                    "%s order_update id=%s side=%s price=%s qty=%s",
+                    self._log_prefix, order_id, side, price, original_size,
+                )
 
             order = ExchangeOrder(
                 order_id=order_id, symbol=display_symbol, side=side,
