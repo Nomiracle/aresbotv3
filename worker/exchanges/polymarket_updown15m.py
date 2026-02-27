@@ -306,10 +306,15 @@ class PolymarketUpDown15m(BaseExchange):
             elif isinstance(resp, list):
                 canceled = set(resp)
 
+            if not canceled:
+                logger.warning(
+                    "%s cancel_orders returned empty canceled list, resp=%s",
+                    self.log_prefix, resp,
+                )
+
             results: List[OrderResult] = []
             for order_id in order_ids:
-                if order_id in canceled or canceled == set():
-                    # 无法区分时默认成功
+                if order_id in canceled:
                     with self._orders_lock:
                         if order_id in self._orders_cache:
                             self._orders_cache[order_id].status = OrderStatus.CANCELLED
