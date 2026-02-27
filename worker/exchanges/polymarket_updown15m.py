@@ -300,17 +300,8 @@ class PolymarketUpDown15m(BaseExchange):
 
         try:
             resp = self._client.cancel_orders(order_ids)
-            canceled = set()
-            if isinstance(resp, dict):
-                canceled = set(resp.get("canceled", []) or [])
-            elif isinstance(resp, list):
-                canceled = set(resp)
-
-            if not canceled:
-                logger.warning(
-                    "%s cancel_orders returned empty canceled list, resp=%s",
-                    self.log_prefix, resp,
-                )
+            canceled = set(resp.get("canceled", []))
+            not_canceled = resp.get("not_canceled", {})
 
             results: List[OrderResult] = []
             for order_id in order_ids:
@@ -320,24 +311,15 @@ class PolymarketUpDown15m(BaseExchange):
                             self._orders_cache[order_id].status = OrderStatus.CANCELLED
                     results.append(OrderResult(success=True, order_id=order_id, status=OrderStatus.CANCELLED))
                 else:
-                    results.append(OrderResult(success=False, order_id=order_id, status=OrderStatus.FAILED, error="not in canceled list"))
+                    error = not_canceled.get(order_id, "not in canceled list")
+                    results.append(OrderResult(success=False, order_id=order_id, status=OrderStatus.FAILED, error=str(error)))
             return results
         except Exception as e:
-            logger.warning("%s cancel_orders batch failed: %s, falling back to single cancel", self.log_prefix, e)
-
-        # 批量失败时逐个取消
-        results = []
-        for order_id in order_ids:
-            try:
-                self._client.cancel(order_id)
-                with self._orders_lock:
-                    if order_id in self._orders_cache:
-                        self._orders_cache[order_id].status = OrderStatus.CANCELLED
-                results.append(OrderResult(success=True, order_id=order_id, status=OrderStatus.CANCELLED))
-            except Exception as e:
-                logger.warning("%s cancel order failed order_id=%s err=%s", self.log_prefix, order_id, e)
-                results.append(OrderResult(success=False, order_id=order_id, status=OrderStatus.FAILED, error=str(e)))
-        return results
+            logger.warning("%s cancel_orders failed: %s", self.log_prefix, e)
+            return [
+                OrderResult(success=False, order_id=oid, status=OrderStatus.FAILED, error=str(e))
+                for oid in order_ids
+            ]
 
     def get_order(self, order_id: str) -> Optional[ExchangeOrder]:
         # 缓存优先: 终态订单直接返回
