@@ -226,7 +226,7 @@ class PolymarketUpDown15m(BaseExchange):
                 if side == "SELL":
                     quantity = self._resolve_sell_quantity(requested_quantity=quantity)
                 signed = self._create_signed_order(side, price, quantity)
-                batch_args.append(PostOrdersArgs(order=signed, orderType=OrderType.GTC, post_only=True))
+                batch_args.append(PostOrdersArgs(order=signed, orderType=OrderType.GTC, postOnly=True))
                 batch_indices.append(i)
                 batch_meta.append((side, price, quantity))
             except Exception as e:
