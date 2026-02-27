@@ -391,6 +391,16 @@ class ExchangeSpot(BaseExchange):
     def get_status_extra(self) -> Dict[str, Any]:
         return {"ws_enabled": self._stream is not None}
 
+    def get_quote_balance(self) -> Optional[float]:
+        try:
+            quote = self._market_symbol.split("/")[-1] if "/" in self._market_symbol else None
+            if not quote:
+                return None
+            balance = self._run_sync(lambda: self._exchange.fetch_balance())
+            return float((balance.get(quote) or {}).get("total", 0) or 0)
+        except Exception:
+            return None
+
     def get_trading_rules(self) -> TradingRules:
         if self._trading_rules is not None:
             return self._trading_rules

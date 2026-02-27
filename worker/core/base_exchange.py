@@ -216,6 +216,10 @@ class BaseExchange(ABC):
         aligned = math.floor(qty / rules.step_size) * rules.step_size
         return round(aligned, rules.qty_decimals)
 
+    def get_quote_balance(self) -> Optional[float]:
+        """获取计价币余额（子类可覆写）"""
+        return None
+
     def close(self) -> None:
         """关闭交易所连接，释放资源（子类可覆盖）"""
         pass

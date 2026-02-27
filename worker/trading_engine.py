@@ -108,11 +108,20 @@ class TradingEngine:
         except Exception as e:
             self.log.warning("关闭交易所连接失败: %s", e)
 
+    _BALANCE_EVENTS = {"order_filled", "order_failed", "stop_loss_triggered", "order_reconciled"}
+
     def _emit_notify(self, event, title: str, body: str) -> None:
         """安全地发送通知"""
         if self.on_notify is None:
             return
         try:
+            if event in self._BALANCE_EVENTS:
+                try:
+                    bal = self.exchange.get_quote_balance()
+                    if bal is not None:
+                        body = f"{body}\n余额: {bal}"
+                except Exception:
+                    pass
             self.on_notify(event, title, body)
         except Exception as e:
             self.log.debug("通知发送失败: %s", e)

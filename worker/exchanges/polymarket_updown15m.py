@@ -137,6 +137,17 @@ class PolymarketUpDown15m(BaseExchange):
     def get_fee_rate(self) -> float:
         return 0.0
 
+    def get_quote_balance(self) -> Optional[float]:
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            resp = self._client.get_balance_allowance(params)
+            raw = resp["balance"]
+            return int(raw) / 1_000_000
+        except Exception as e:
+            logger.warning("%s balance query failed: %s", self.log_prefix, e)
+            return None
+
     def get_status_extra(self) -> Dict[str, Any]:
         seconds_until_close = self._seconds_until_close()
         return {

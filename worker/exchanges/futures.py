@@ -1,7 +1,7 @@
 """合约交易所实现（基于 CCXT）"""
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from shared.exchanges import FUTURES_EXCHANGE_IDS
 from worker.core.base_exchange import ExchangeOrder, OrderRequest
@@ -35,6 +35,19 @@ class ExchangeFutures(ExchangeSpot):
 
     def get_exchange_info(self) -> Dict[str, str]:
         return {"id": self.exchange_id, "name": self.exchange_id, "type": "futures"}
+
+    def get_quote_balance(self) -> Optional[float]:
+        try:
+            if not self._ensure_markets_loaded():
+                return None
+            market = self._exchange.market(self._market_symbol)
+            quote = market.get("settle") or market.get("quote")
+            if not quote:
+                return None
+            balance = self._run_sync(lambda: self._exchange.fetch_balance())
+            return float((balance.get(quote) or {}).get("total", 0) or 0)
+        except Exception:
+            return None
 
     def detect_position_mode(self) -> None:
         """检测账户持仓模式，结果存储到 self._hedge_mode"""
