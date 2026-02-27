@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 import pytz
 import requests
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OpenOrderParams, OrderArgs, OrderType, PostOrdersArgs
+from py_clob_client.clob_types import MarketOrderArgs, OpenOrderParams, OrderArgs, OrderType, PostOrdersArgs
 from py_clob_client.order_builder.constants import BUY, SELL
 
 from worker.core.base_exchange import (
@@ -601,7 +601,7 @@ class PolymarketUpDown15m(BaseExchange):
             logger.warning("%s cancel_market_orders failed: %s", self.log_prefix, e)
 
     def _liquidate_position(self) -> Optional[Dict[str, Any]]:
-        """以IOC市价单清算当前token持仓, 返回清算结果."""
+        """以FOK市价单清算当前token持仓, 返回清算结果."""
         if not self._token_id:
             return None
         try:
@@ -609,23 +609,86 @@ class PolymarketUpDown15m(BaseExchange):
             if balance < 1.0:
                 return None
 
-            order_args = OrderArgs(
-                price=0.01,
-                size=balance,
-                side=SELL,
-                token_id=self._token_id,
+            # 使用市价单清算，price 为滑点保护（最差价格限制）
+            signed = self._client.create_market_order(
+                MarketOrderArgs(
+                    token_id=self._token_id,
+                    amount=balance,
+                    side=SELL,
+                    price=0.01,
+                    order_type=OrderType.FOK,
+                ),
             )
-            signed = self._client.create_order(order_args)
             raw_response = self._post_order(signed, OrderType.FOK)
-            logger.info("%s liquidated position qty=%s", self.log_prefix, balance)
+
+            # 从响应中提取 orderID，查询实际成交价
+            fill_price = self._query_fill_price(raw_response)
+            logger.info(
+                "%s liquidated position qty=%s fill_price=%s",
+                self.log_prefix, balance, fill_price,
+            )
             return {
                 "quantity": balance,
-                "price": 0.01,
+                "price": fill_price,
                 "raw_response": raw_response,
             }
         except Exception as e:
             logger.warning("%s liquidate position failed: %s", self.log_prefix, e)
             return None
+
+    def _query_fill_price(self, post_response: Any) -> float:
+        """提交 FOK 单后查询实际成交价."""
+        order_id = None
+        if isinstance(post_response, dict):
+            order_id = (
+                post_response.get("orderID")
+                or post_response.get("id")
+                or post_response.get("order_id")
+            )
+        if not order_id:
+            # 无法获取 orderID，回退到最近成交价
+            return self._fallback_last_trade_price()
+
+        # FOK 单成交很快，短暂等待后查询
+        time.sleep(0.5)
+        try:
+            order_info = self._client.get_order(order_id)
+            if isinstance(order_info, dict):
+                # associate_trades 里有实际成交价
+                trades = order_info.get("associate_trades") or []
+                if trades:
+                    total_value = 0.0
+                    total_size = 0.0
+                    for t in trades:
+                        t_price = _safe_float(t.get("price", 0))
+                        t_size = _safe_float(t.get("size", 0))
+                        if t_price > 0 and t_size > 0:
+                            total_value += t_price * t_size
+                            total_size += t_size
+                    if total_size > 0:
+                        return round(total_value / total_size, 4)
+
+                # 没有 trades 信息，用订单的 price 字段
+                avg = _safe_float(order_info.get("average_price", 0))
+                if avg > 0:
+                    return avg
+                price = _safe_float(order_info.get("price", 0))
+                if price > 0:
+                    return price
+        except Exception as e:
+            logger.debug("%s query fill price failed: %s", self.log_prefix, e)
+
+        return self._fallback_last_trade_price()
+
+    def _fallback_last_trade_price(self) -> float:
+        """回退方案：获取该 token 最近成交价."""
+        try:
+            resp = self._client.get_last_trade_price(self._token_id)
+            if isinstance(resp, dict):
+                return _safe_float(resp.get("price", 0))
+        except Exception:
+            pass
+        return 0.0
 
     def _get_token_balance(self, token_id: str) -> float:
         """查询指定token的可用余额."""
