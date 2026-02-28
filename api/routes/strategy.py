@@ -1,5 +1,6 @@
 """Strategy management routes."""
 import asyncio
+import logging
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 
@@ -15,6 +16,7 @@ from api.db.crud import StrategyCRUD, AccountCRUD
 from api.db.models import Strategy, StrategyRecordStatus
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class StrategyCreate(BaseModel):
@@ -226,33 +228,84 @@ def _ensure_worker_capacity(worker_name: Optional[str]) -> None:
     )
 
 
-def _validate_worker(worker_name: Optional[str]) -> None:
+def _resolve_worker_name_from_cache(
+    worker_name: Optional[str],
+    workers: List[Dict[str, Any]],
+) -> Optional[str]:
+    """Resolve worker name from known aliases.
+
+    Supported aliases:
+    - Exact worker name (e.g. ``celery@worker-xxxx``)
+    - Hostname/suffix part (e.g. ``worker-xxxx``)
+    - ``celery@`` prefix completion
+    """
+    if not worker_name:
+        return None
+
+    normalized = worker_name.strip()
+    if not normalized:
+        return None
+
+    worker_names = {str(w.get("name") or "") for w in workers}
+    if normalized in worker_names:
+        return normalized
+
+    prefixed = f"celery@{normalized}"
+    if prefixed in worker_names:
+        return prefixed
+
+    host_matches = [
+        str(w.get("name") or "")
+        for w in workers
+        if str(w.get("hostname") or "").strip() == normalized
+    ]
+    host_matches = [name for name in host_matches if name]
+    if len(host_matches) == 1:
+        return host_matches[0]
+
+    suffix_matches = [
+        str(w.get("name") or "")
+        for w in workers
+        if str(w.get("name") or "").split("@")[-1] == normalized
+    ]
+    suffix_matches = [name for name in suffix_matches if name]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"指定 Worker 不在线: {worker_name}",
+    )
+
+
+def _validate_worker(worker_name: Optional[str]) -> Optional[str]:
     """Validate worker availability and capacity in a single get_active_workers call."""
     if not worker_name:
-        return
+        return None
 
     workers = get_active_workers()
-    worker_names = {w["name"] for w in workers}
-
-    if worker_name not in worker_names:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"指定 Worker 不在线: {worker_name}",
-        )
-
+    resolved_worker_name = _resolve_worker_name_from_cache(worker_name, workers)
+    if not resolved_worker_name:
+        return None
     for w in workers:
-        if w["name"] == worker_name:
+        if w["name"] == resolved_worker_name:
             concurrency = int(w.get("concurrency") or 0)
             active = int(w.get("active_tasks") or 0)
             if concurrency > 0 and active >= concurrency:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
-                        f"Worker {worker_name} 已满载（{active}/{concurrency}），"
+                        f"Worker {resolved_worker_name} 已满载（{active}/{concurrency}），"
                         f"请先停止该节点上的某个策略，或将此策略分配到其他 Worker 节点"
                     ),
                 )
-            return
+            return resolved_worker_name
+
+    # 理论上不会触发；兜底保持行为明确
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"指定 Worker 不在线: {worker_name}",
+    )
 
 
 def _ensure_no_duplicate_symbol(
@@ -548,7 +601,7 @@ async def start_strategy(
 
     # Submit Celery task - 优先使用请求中的 worker，其次使用策略保存的 worker
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
-    await asyncio.to_thread(_validate_worker, worker_name)
+    worker_name = await asyncio.to_thread(_validate_worker, worker_name)
 
     strategy_runtime = {
         "user_email": user_email,
@@ -667,9 +720,15 @@ class BatchRequest(BaseModel):
     strategy_ids: List[int]
 
 
+class BatchFailureDetail(BaseModel):
+    strategy_id: int
+    reason: str
+
+
 class BatchResult(BaseModel):
     success: List[int]
     failed: List[int]
+    failed_details: List[BatchFailureDetail] = Field(default_factory=list)
 
 
 class BatchUpdateRequest(BaseModel):
@@ -704,31 +763,30 @@ async def batch_update_strategies(
 def _validate_worker_from_cache(
     worker_name: Optional[str],
     workers: List[Dict],
-) -> None:
+) -> Optional[str]:
     """Validate worker availability and capacity using a pre-fetched worker list."""
-    if not worker_name:
-        return
-
-    worker_names = {w["name"] for w in workers}
-    if worker_name not in worker_names:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"指定 Worker 不在线: {worker_name}",
-        )
+    resolved_worker_name = _resolve_worker_name_from_cache(worker_name, workers)
+    if not resolved_worker_name:
+        return None
 
     for w in workers:
-        if w["name"] == worker_name:
+        if w["name"] == resolved_worker_name:
             concurrency = int(w.get("concurrency") or 0)
             active = int(w.get("active_tasks") or 0)
             if concurrency > 0 and active >= concurrency:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
-                        f"Worker {worker_name} 已满载（{active}/{concurrency}），"
+                        f"Worker {resolved_worker_name} 已满载（{active}/{concurrency}），"
                         f"请先停止该节点上的某个策略，或将此策略分配到其他 Worker 节点"
                     ),
                 )
-            return
+            return resolved_worker_name
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"指定 Worker 不在线: {worker_name}",
+    )
 
 
 @router.post("/batch/start", response_model=BatchResult)
@@ -739,15 +797,26 @@ async def batch_start_strategies(
 ):
     """Batch start multiple strategies."""
     success, failed = [], []
+    failed_details: List[BatchFailureDetail] = []
     workers = await asyncio.to_thread(get_active_workers)
     for sid in data.strategy_ids:
         try:
             strategy = await StrategyCRUD.get_by_id(session, sid, user_email)
             if not strategy:
+                failed_details.append(BatchFailureDetail(strategy_id=sid, reason="策略不存在或已删除"))
                 failed.append(sid)
                 continue
             account = await AccountCRUD.get_by_id(session, strategy.account_id, user_email)
-            if not account or not account.is_active or _is_strategy_running(sid):
+            if not account:
+                failed_details.append(BatchFailureDetail(strategy_id=sid, reason="账户不存在"))
+                failed.append(sid)
+                continue
+            if not account.is_active:
+                failed_details.append(BatchFailureDetail(strategy_id=sid, reason="账户未启用"))
+                failed.append(sid)
+                continue
+            if _is_strategy_running(sid):
+                failed_details.append(BatchFailureDetail(strategy_id=sid, reason="策略已在运行中"))
                 failed.append(sid)
                 continue
             _ensure_no_duplicate_symbol(strategy, account.exchange, user_email)
@@ -773,7 +842,7 @@ async def batch_start_strategies(
                 "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                 "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
             }
-            _validate_worker_from_cache(strategy.worker_name, workers)
+            resolved_worker_name = _validate_worker_from_cache(strategy.worker_name, workers)
             strategy_runtime = {
                 "user_email": user_email,
                 "strategy_snapshot": {
@@ -792,7 +861,7 @@ async def batch_start_strategies(
                     "max_open_positions": strategy.max_open_positions,
                     "max_daily_drawdown": str(strategy.max_daily_drawdown) if strategy.max_daily_drawdown else None,
                     "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
-                    "worker_name": strategy.worker_name,
+                    "worker_name": resolved_worker_name,
                     "exchange": account.exchange,
                 },
                 "runtime_config": strategy_config,
@@ -803,12 +872,17 @@ async def batch_start_strategies(
                 account_data,
                 strategy_config,
                 strategy_runtime=strategy_runtime,
-                worker_name=strategy.worker_name,
+                worker_name=resolved_worker_name,
             )
             success.append(sid)
-        except Exception:
+        except HTTPException as err:
+            failed_details.append(BatchFailureDetail(strategy_id=sid, reason=str(err.detail)))
             failed.append(sid)
-    return BatchResult(success=success, failed=failed)
+        except Exception as err:
+            logger.exception("batch start strategy failed: strategy_id=%s", sid)
+            failed_details.append(BatchFailureDetail(strategy_id=sid, reason=f"内部错误: {err}"))
+            failed.append(sid)
+    return BatchResult(success=success, failed=failed, failed_details=failed_details)
 
 
 @router.post("/batch/stop", response_model=BatchResult)

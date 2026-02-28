@@ -352,6 +352,14 @@ async function handleBatchStart() {
   try {
     const result = await strategyApi.batchStart(selectedIds.value)
     ElMessage.success(`启动成功: ${result.success.length}, 失败: ${result.failed.length}`)
+    if (result.failed_details && result.failed_details.length > 0) {
+      const preview = result.failed_details
+        .slice(0, 3)
+        .map((item) => `#${item.strategy_id} ${item.reason}`)
+        .join('；')
+      const rest = result.failed_details.length > 3 ? `；其余 ${result.failed_details.length - 3} 条请查看接口响应` : ''
+      ElMessage.warning(`启动失败原因: ${preview}${rest}`)
+    }
     fetchStrategies()
   } catch {}
 }

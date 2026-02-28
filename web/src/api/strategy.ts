@@ -11,6 +11,10 @@ import type {
 interface BatchResult {
   success: number[]
   failed: number[]
+  failed_details?: Array<{
+    strategy_id: number
+    reason: string
+  }>
 }
 
 export const strategyApi = {
