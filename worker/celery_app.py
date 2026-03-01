@@ -6,6 +6,8 @@ import sys
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import threading
+
 import yaml
 from celery import Celery
 from celery.signals import (
@@ -143,6 +145,43 @@ def on_after_setup_task_logger(logger, *args, **kwargs):
     _setup_worker_file_logging(logger)
 
 
+_heartbeat_stop_event = threading.Event()
+
+# 心跳间隔：默认 6 小时，确保在 24h TTL 过期前多次续期
+_HEARTBEAT_INTERVAL = int(os.environ.get("WORKER_HEARTBEAT_INTERVAL", "21600"))
+
+
+def _heartbeat_loop(worker_name: str) -> None:
+    """Periodically re-register worker to refresh Redis info TTL."""
+    from shared.core.redis_client import get_redis_client
+    from shared.utils.version import get_worker_version
+
+    heartbeat_logger = logging.getLogger("worker.heartbeat")
+    while not _heartbeat_stop_event.wait(timeout=_HEARTBEAT_INTERVAL):
+        try:
+            identity = get_worker_network_identity()
+            version = get_worker_version()
+            redis_client = get_redis_client()
+            redis_client.register_worker(
+                worker_name,
+                ip=identity.worker_ip,
+                hostname=identity.hostname,
+                private_ip=identity.private_ip,
+                public_ip=identity.public_ip,
+                ip_location=identity.ip_location,
+                version=version,
+            )
+            heartbeat_logger.debug("heartbeat refreshed for %s", worker_name)
+        except Exception as err:
+            heartbeat_logger.warning("heartbeat failed for %s: %s", worker_name, err)
+
+
+def _start_heartbeat(worker_name: str) -> None:
+    _heartbeat_stop_event.clear()
+    t = threading.Thread(target=_heartbeat_loop, args=(worker_name,), daemon=True)
+    t.start()
+
+
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):
     """Register worker when it's ready."""
@@ -170,10 +209,14 @@ def on_worker_ready(sender, **kwargs):
         f"location={identity.ip_location or '-'}"
     )
 
+    # 启动心跳线程，定期刷新 Redis 中的 worker 注册信息 TTL
+    _start_heartbeat(worker_name)
+
 
 @worker_shutdown.connect
 def on_worker_shutdown(sender, **kwargs):
     """Unregister worker when it shuts down."""
+    _heartbeat_stop_event.set()
     from shared.core.redis_client import get_redis_client
     worker_name = os.environ.get("WORKER_NAME") or sender.hostname
     redis_client = get_redis_client()

@@ -81,8 +81,15 @@ def get_active_workers() -> List[Dict]:
         logger.warning("celery inspect failed, fallback to redis workers: %s", err)
 
     workers = []
-    worker_names = set(ping_result.keys()) or set(redis_workers.keys())
+    worker_names = set(ping_result.keys()) | set(redis_workers.keys())
     for worker_name in sorted(worker_names):
+        is_alive = worker_name in ping_result
+        has_info = redis_client.get_worker_info(worker_name) is not None
+        # Worker 既不响应 ping 又没有 info（TTL 过期），视为已掉线，清理掉
+        if not is_alive and not has_info:
+            redis_client.unregister_worker(worker_name)
+            logger.info("removed stale worker %s (no ping, no info)", worker_name)
+            continue
         stats = stats_result.get(worker_name, {})
         # 从 Redis 获取 worker 详细信息
         worker_info = redis_client.get_worker_info(worker_name) or redis_workers.get(worker_name, {})
