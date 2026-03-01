@@ -300,6 +300,8 @@ class TradeCRUD:
         limit: int = 100,
         offset: int = 0,
         strategy_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> Sequence[Trade]:
         """Get trades for a user."""
         query = (
@@ -315,6 +317,10 @@ class TradeCRUD:
         )
         if strategy_id is not None:
             query = query.where(Trade.strategy_id == strategy_id)
+        if start_date is not None:
+            query = query.where(Trade.created_at >= start_date)
+        if end_date is not None:
+            query = query.where(Trade.created_at <= end_date)
         result = await session.execute(query)
         return result.unique().scalars().all()
 
@@ -323,6 +329,8 @@ class TradeCRUD:
         session: AsyncSession,
         user_email: str,
         strategy_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> int:
         """Count trades for a user."""
         query = (
@@ -333,6 +341,10 @@ class TradeCRUD:
         )
         if strategy_id is not None:
             query = query.where(Trade.strategy_id == strategy_id)
+        if start_date is not None:
+            query = query.where(Trade.created_at >= start_date)
+        if end_date is not None:
+            query = query.where(Trade.created_at <= end_date)
         result = await session.execute(query)
         return result.scalar() or 0
 
@@ -340,17 +352,31 @@ class TradeCRUD:
     async def get_stats(
         session: AsyncSession,
         user_email: str,
-        days: int = 30,
+        days: Optional[int] = None,
         strategy_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> dict:
         """Get trade statistics for a user."""
-        since = datetime.utcnow() - timedelta(days=days)
+        # Priority: explicit dates > days > default 30 days
+        if start_date is not None or end_date is not None:
+            since = start_date
+            until = end_date
+            period_days = None
+        else:
+            effective_days = days if days is not None else 30
+            since = datetime.utcnow() - timedelta(days=effective_days)
+            until = None
+            period_days = effective_days
 
         # Build base query
         base_filter = [
             Strategy.user_email == user_email,
-            Trade.created_at >= since,
         ]
+        if since is not None:
+            base_filter.append(Trade.created_at >= since)
+        if until is not None:
+            base_filter.append(Trade.created_at <= until)
         if strategy_id is not None:
             base_filter.append(Trade.strategy_id == strategy_id)
 
@@ -401,8 +427,48 @@ class TradeCRUD:
         )
         loss_count = loss_result.scalar() or 0
 
+        # New metrics
+        pnl_trade_count = win_count + loss_count
+        net_pnl = total_pnl - total_fees
+        avg_pnl = total_pnl / pnl_trade_count if pnl_trade_count > 0 else Decimal("0")
+
+        # Max win
+        max_win_result = await session.execute(
+            select(func.max(Trade.pnl))
+            .join(Strategy)
+            .where(*base_filter, Trade.pnl > 0)
+        )
+        max_win = max_win_result.scalar() or Decimal("0")
+
+        # Max loss
+        max_loss_result = await session.execute(
+            select(func.min(Trade.pnl))
+            .join(Strategy)
+            .where(*base_filter, Trade.pnl < 0)
+        )
+        max_loss = max_loss_result.scalar() or Decimal("0")
+
+        # Profit factor: avg(wins) / abs(avg(losses))
+        avg_win_result = await session.execute(
+            select(func.avg(Trade.pnl))
+            .join(Strategy)
+            .where(*base_filter, Trade.pnl > 0)
+        )
+        avg_win = avg_win_result.scalar() or Decimal("0")
+
+        avg_loss_result = await session.execute(
+            select(func.avg(Trade.pnl))
+            .join(Strategy)
+            .where(*base_filter, Trade.pnl < 0)
+        )
+        avg_loss = avg_loss_result.scalar() or Decimal("0")
+
+        profit_factor = (
+            float(avg_win / abs(avg_loss)) if avg_loss != 0 else 0.0
+        )
+
         return {
-            "period_days": days,
+            "period_days": period_days,
             "total_trades": total_trades,
             "total_pnl": total_pnl,
             "total_volume": total_volume,
@@ -414,6 +480,11 @@ class TradeCRUD:
                 if (win_count + loss_count) > 0
                 else 0
             ),
+            "net_pnl": net_pnl,
+            "avg_pnl": avg_pnl,
+            "max_win": max_win,
+            "max_loss": max_loss,
+            "profit_factor": profit_factor,
         }
 
 

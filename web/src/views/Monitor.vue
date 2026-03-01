@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { RunningStrategy, StrategyStatus } from '@/types'
 import { strategyApi } from '@/api/strategy'
 import MonitorCard from '@/components/MonitorCard.vue'
+
+const router = useRouter()
 
 const OVERVIEW_ALERT_THRESHOLD = {
   totalOrderValue: 50000,
@@ -210,6 +213,10 @@ async function handleStop(id: number) {
   }
 }
 
+function handleViewTrades(id: number) {
+  router.push({ name: 'Trades', query: { strategy_id: String(id) } })
+}
+
 function getStatus(id: number): StrategyStatus | null {
   return statusMap.value.get(id) || null
 }
@@ -301,6 +308,7 @@ onUnmounted(() => {
         :index="idx + 1"
         @start="handleStart"
         @stop="handleStop"
+        @view-trades="handleViewTrades"
       />
       <el-empty v-if="runningStrategies.length === 0" description="暂无运行中的策略" style="width: 100%" />
     </div>

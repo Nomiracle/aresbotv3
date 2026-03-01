@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import type { Trade, Strategy } from '@/types'
+import type { Trade, TradeStats, Strategy } from '@/types'
 import { tradeApi } from '@/api/trade'
 import { strategyApi } from '@/api/strategy'
 import { getExchangeOptionsFromCache } from '@/api/account'
 import { exchangeColor, exchangeBgColor } from '@/utils/exchangeColor'
+
+const route = useRoute()
+const router = useRouter()
 
 const trades = ref<Trade[]>([])
 const loading = ref(false)
@@ -27,6 +31,71 @@ const highlightStrategyId = ref<number | null>(null)
 
 const RECENT_STRATEGY_IDS_KEY = 'aresbot.trades.recentStrategyIds.v1'
 const recentStrategyIds = ref<number[]>(loadRecentStrategyIds())
+
+const dateRange = ref<[Date, Date] | null>(null)
+const tradeStats = ref<TradeStats | null>(null)
+const statsLoading = ref(false)
+
+const dateShortcuts = [
+  {
+    text: '今天',
+    value: () => {
+      const start = new Date()
+      start.setHours(0, 0, 0, 0)
+      const end = new Date()
+      end.setHours(23, 59, 59, 999)
+      return [start, end] as [Date, Date]
+    },
+  },
+  {
+    text: '最近7天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 7)
+      start.setHours(0, 0, 0, 0)
+      return [start, end] as [Date, Date]
+    },
+  },
+  {
+    text: '最近30天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 30)
+      start.setHours(0, 0, 0, 0)
+      return [start, end] as [Date, Date]
+    },
+  },
+  {
+    text: '最近90天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 90)
+      start.setHours(0, 0, 0, 0)
+      return [start, end] as [Date, Date]
+    },
+  },
+  {
+    text: '本月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      const end = new Date()
+      return [start, end] as [Date, Date]
+    },
+  },
+  {
+    text: '上月',
+    value: () => {
+      const now = new Date()
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+      return [start, end] as [Date, Date]
+    },
+  },
+]
 
 const selectedStrategy = computed(() => (
   selectedStrategyId.value
@@ -69,12 +138,16 @@ const otherFilteredStrategies = computed(() => {
 async function fetchTrades() {
   loading.value = true
   try {
-    const params: { limit: number; offset: number; strategy_id?: number } = {
+    const params: { limit: number; offset: number; strategy_id?: number; start_date?: string; end_date?: string } = {
       limit: pageSize.value,
       offset: (currentPage.value - 1) * pageSize.value,
     }
     if (selectedStrategyId.value) {
       params.strategy_id = selectedStrategyId.value
+    }
+    if (dateRange.value) {
+      params.start_date = dateRange.value[0].toISOString()
+      params.end_date = dateRange.value[1].toISOString()
     }
     const result = await tradeApi.getAll(params)
     trades.value = result.items
@@ -156,6 +229,7 @@ function clearStrategyFilter() {
   selectedStrategyId.value = null
   currentPage.value = 1
   fetchTrades()
+  fetchStats()
 }
 
 function clearStrategyFilterAndClose() {
@@ -172,6 +246,39 @@ function applyStrategyFilter() {
   strategyPickerVisible.value = false
   currentPage.value = 1
   fetchTrades()
+  fetchStats()
+}
+
+async function fetchStats() {
+  statsLoading.value = true
+  try {
+    const params: { strategy_id?: number; start_date?: string; end_date?: string } = {}
+    if (selectedStrategyId.value) {
+      params.strategy_id = selectedStrategyId.value
+    }
+    if (dateRange.value) {
+      params.start_date = dateRange.value[0].toISOString()
+      params.end_date = dateRange.value[1].toISOString()
+    }
+    tradeStats.value = await tradeApi.getStats(params)
+  } catch {
+    tradeStats.value = null
+  } finally {
+    statsLoading.value = false
+  }
+}
+
+function handleDateRangeChange() {
+  currentPage.value = 1
+  fetchTrades()
+  fetchStats()
+}
+
+function clearDateRange() {
+  dateRange.value = null
+  currentPage.value = 1
+  fetchTrades()
+  fetchStats()
 }
 
 function getRelatedBuyTrade(sellTrade: Trade): Trade | null {
@@ -244,8 +351,23 @@ function formatNullable(value: unknown): string {
   return String(value)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // Read strategy_id from route query (e.g. from Monitor page jump)
+  const queryStrategyId = route.query.strategy_id
+  if (queryStrategyId) {
+    const id = Number(queryStrategyId)
+    if (Number.isFinite(id) && id > 0) {
+      selectedStrategyId.value = id
+      bumpRecentStrategy(id)
+      // Load strategies so the name can be displayed
+      await ensureStrategiesLoaded()
+    }
+    // Clean up URL
+    router.replace({ query: {} })
+  }
+
   fetchTrades()
+  fetchStats()
 })
 
 watch(strategyPickerVisible, async visible => {
@@ -282,10 +404,108 @@ watch(strategyPickerVisible, async visible => {
               <el-tag size="small" type="info" effect="plain">{{ getExchangeLabel(selectedStrategy.exchange) }}</el-tag>
               <el-button size="small" text @click="clearStrategyFilter">清除</el-button>
             </template>
+
+            <el-divider direction="vertical" />
+
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              size="small"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              :shortcuts="dateShortcuts"
+              @change="handleDateRangeChange"
+              clearable
+              @clear="clearDateRange"
+            />
           </el-space>
         </div>
       </el-row>
     </div>
+
+    <el-card class="stat-card compact" v-loading="statsLoading" shadow="never">
+      <el-row :gutter="16">
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">总盈亏</div>
+            <div class="stat-value" :class="tradeStats && parseFloat(tradeStats.total_pnl) >= 0 ? 'positive' : 'negative'">
+              {{ tradeStats ? `${parseFloat(tradeStats.total_pnl) >= 0 ? '+' : ''}${tradeStats.total_pnl}` : '-' }}
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">净盈亏(扣费)</div>
+            <div class="stat-value" :class="tradeStats && parseFloat(tradeStats.net_pnl) >= 0 ? 'positive' : 'negative'">
+              {{ tradeStats ? `${parseFloat(tradeStats.net_pnl) >= 0 ? '+' : ''}${tradeStats.net_pnl}` : '-' }}
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">交易次数</div>
+            <div class="stat-value">{{ tradeStats?.total_trades ?? '-' }}</div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">胜率</div>
+            <div class="stat-value">{{ tradeStats ? `${(tradeStats.win_rate * 100).toFixed(1)}%` : '-' }}</div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">胜/负</div>
+            <div class="stat-value">{{ tradeStats ? `${tradeStats.win_count}/${tradeStats.loss_count}` : '-' }}</div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">盈亏比</div>
+            <div class="stat-value">{{ tradeStats ? tradeStats.profit_factor.toFixed(2) : '-' }}</div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">手续费</div>
+            <div class="stat-value">{{ tradeStats?.total_fees ?? '-' }}</div>
+          </div>
+        </el-col>
+        <el-col :span="3">
+          <div class="stat-item">
+            <div class="stat-label">总成交额</div>
+            <div class="stat-value">{{ tradeStats?.total_volume ?? '-' }}</div>
+          </div>
+        </el-col>
+      </el-row>
+      <el-row :gutter="16" style="margin-top: 8px;">
+        <el-col :span="8">
+          <div class="stat-item">
+            <div class="stat-label">平均每笔盈亏</div>
+            <div class="stat-value" :class="tradeStats && parseFloat(tradeStats.avg_pnl) >= 0 ? 'positive' : 'negative'">
+              {{ tradeStats ? `${parseFloat(tradeStats.avg_pnl) >= 0 ? '+' : ''}${tradeStats.avg_pnl}` : '-' }}
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="8">
+          <div class="stat-item">
+            <div class="stat-label">最大单笔盈利</div>
+            <div class="stat-value positive">
+              {{ tradeStats ? `+${tradeStats.max_win}` : '-' }}
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="8">
+          <div class="stat-item">
+            <div class="stat-label">最大单笔亏损</div>
+            <div class="stat-value negative">
+              {{ tradeStats?.max_loss ?? '-' }}
+            </div>
+          </div>
+        </el-col>
+      </el-row>
+    </el-card>
 
     <el-card>
       <el-table
@@ -860,5 +1080,41 @@ watch(strategyPickerVisible, async visible => {
   .strategy-picker-preview {
     padding-left: 0;
   }
+}
+
+.stat-card.compact {
+  margin-bottom: 16px;
+  border-radius: 8px;
+  border: 1px solid #e8edf4;
+}
+
+.stat-card.compact :deep(.el-card__body) {
+  padding: 12px 16px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  white-space: nowrap;
+}
+
+.stat-value.positive {
+  color: #67c23a;
+}
+
+.stat-value.negative {
+  color: #f56c6c;
 }
 </style>

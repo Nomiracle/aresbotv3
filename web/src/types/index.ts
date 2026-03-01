@@ -161,7 +161,7 @@ export interface Trade {
 }
 
 export interface TradeStats {
-  period_days: number
+  period_days: number | null
   total_trades: number
   total_pnl: string
   total_volume: string
@@ -169,6 +169,11 @@ export interface TradeStats {
   win_count: number
   loss_count: number
   win_rate: number
+  net_pnl: string
+  avg_pnl: string
+  max_win: string
+  max_loss: string
+  profit_factor: number
 }
 
 export interface PaginatedResponse<T> {

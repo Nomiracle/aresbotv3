@@ -1,4 +1,5 @@
 """Trade records routes."""
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
@@ -41,7 +42,7 @@ class PaginatedTradeResponse(BaseModel):
 
 
 class TradeStatsResponse(BaseModel):
-    period_days: int
+    period_days: Optional[int]
     total_trades: int
     total_pnl: Decimal
     total_volume: Decimal
@@ -49,6 +50,11 @@ class TradeStatsResponse(BaseModel):
     win_count: int
     loss_count: int
     win_rate: float
+    net_pnl: Decimal
+    avg_pnl: Decimal
+    max_win: Decimal
+    max_loss: Decimal
+    profit_factor: float
 
 
 def trade_to_response(trade: Trade) -> TradeResponse:
@@ -77,22 +83,31 @@ def trade_to_response(trade: Trade) -> TradeResponse:
 @router.get("", response_model=PaginatedTradeResponse)
 async def list_trades(
     strategy_id: Optional[int] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
+    parsed_start = datetime.fromisoformat(start_date) if start_date else None
+    parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
     trades = await TradeCRUD.get_by_user(
         session,
         user_email=user_email,
         limit=limit,
         offset=offset,
         strategy_id=strategy_id,
+        start_date=parsed_start,
+        end_date=parsed_end,
     )
     total = await TradeCRUD.count_by_user(
         session,
         user_email=user_email,
         strategy_id=strategy_id,
+        start_date=parsed_start,
+        end_date=parsed_end,
     )
 
     return PaginatedTradeResponse(
@@ -105,15 +120,22 @@ async def list_trades(
 
 @router.get("/stats", response_model=TradeStatsResponse)
 async def get_trade_stats(
-    days: int = Query(30, ge=1, le=365),
+    days: Optional[int] = Query(None, ge=1, le=365),
     strategy_id: Optional[int] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     user_email: str = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
+    parsed_start = datetime.fromisoformat(start_date) if start_date else None
+    parsed_end = datetime.fromisoformat(end_date) if end_date else None
+
     stats = await TradeCRUD.get_stats(
         session,
         user_email=user_email,
         days=days,
         strategy_id=strategy_id,
+        start_date=parsed_start,
+        end_date=parsed_end,
     )
     return TradeStatsResponse(**stats)

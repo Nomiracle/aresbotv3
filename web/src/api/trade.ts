@@ -6,11 +6,18 @@ export const tradeApi = {
     strategy_id?: number
     limit?: number
     offset?: number
+    start_date?: string
+    end_date?: string
   }): Promise<PaginatedResponse<Trade>> {
     return api.get('/trades', { params })
   },
 
-  getStats(days: number = 7): Promise<TradeStats> {
-    return api.get('/trades/stats', { params: { days } })
+  getStats(params?: {
+    days?: number
+    strategy_id?: number
+    start_date?: string
+    end_date?: string
+  }): Promise<TradeStats> {
+    return api.get('/trades/stats', { params })
   },
 }

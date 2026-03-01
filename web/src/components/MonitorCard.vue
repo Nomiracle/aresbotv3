@@ -34,6 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'stop', id: number): void
   (e: 'start', id: number): void
+  (e: 'viewTrades', id: number): void
 }>()
 
 const detailVisible = ref(false)
@@ -426,6 +427,7 @@ onUnmounted(() => {
           启动
         </el-button>
         <el-button size="small" class="action-btn" @click="detailVisible = true">详情</el-button>
+        <el-button size="small" class="action-btn" @click="emit('viewTrades', strategy.id)">交易</el-button>
       </div>
     </div>
 

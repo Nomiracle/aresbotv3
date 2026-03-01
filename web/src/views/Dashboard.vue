@@ -20,7 +20,7 @@ const runningCount = computed(() => {
 })
 
 async function fetchStats() {
-  stats.value = await tradeApi.getStats(7)
+  stats.value = await tradeApi.getStats({ days: 7 })
 }
 
 async function fetchStrategies() {
