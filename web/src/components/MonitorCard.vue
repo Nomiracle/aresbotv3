@@ -215,17 +215,20 @@ const polymarketSwitchSeconds = computed(() => {
     return null
   }
 
+  const remaining = polymarketRemainingSeconds.value
+  if (remaining !== null) {
+    const strategyBuffer = toFiniteNumber(props.strategy.market_close_buffer)
+    const buffer = strategyBuffer
+      ?? info.marketCloseBuffer
+      ?? resolvePolymarketDefaultBuffer(props.status?.exchange)
+    return Math.max(0, remaining - Math.floor(buffer))
+  }
+
   if (info.secondsUntilSwitch !== null) {
     return Math.max(0, Math.floor(info.secondsUntilSwitch))
   }
 
-  const remaining = polymarketRemainingSeconds.value
-  if (remaining === null) return null
-  const strategyBuffer = toFiniteNumber(props.strategy.market_close_buffer)
-  const buffer = strategyBuffer
-    ?? info.marketCloseBuffer
-    ?? resolvePolymarketDefaultBuffer(props.status?.exchange)
-  return Math.max(0, remaining - Math.floor(buffer))
+  return null
 })
 
 const isSwitchCritical = computed(() => {
