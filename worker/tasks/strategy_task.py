@@ -254,6 +254,7 @@ class StrategyTask(Task):
 
     name = "worker.tasks.strategy_task.run_strategy"
     max_retries = 0  # No retries for long-running tasks
+    acks_late = False  # 收到即确认，防止 Worker 重启时任务重新入队导致策略自动启动
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Handle task failure."""
