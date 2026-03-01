@@ -488,6 +488,58 @@ class TradeCRUD:
         }
 
 
+    @staticmethod
+    async def get_pnl_summary(
+        session: AsyncSession,
+        strategy_id: int,
+    ) -> dict:
+        """获取策略全部历史交易的盈亏摘要"""
+        total_result = await session.execute(
+            select(func.count(Trade.id)).where(Trade.strategy_id == strategy_id)
+        )
+        total_trades = total_result.scalar() or 0
+
+        fee_result = await session.execute(
+            select(func.coalesce(func.sum(Trade.fee), 0)).where(Trade.strategy_id == strategy_id)
+        )
+        total_fees = float(fee_result.scalar() or 0)
+
+        volume_result = await session.execute(
+            select(func.coalesce(func.sum(Trade.amount), 0)).where(Trade.strategy_id == strategy_id)
+        )
+        total_volume = float(volume_result.scalar() or 0)
+
+        pnl_result = await session.execute(
+            select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+                Trade.strategy_id == strategy_id, Trade.pnl.is_not(None)
+            )
+        )
+        total_pnl = float(pnl_result.scalar() or 0)
+
+        win_result = await session.execute(
+            select(func.count(Trade.id)).where(
+                Trade.strategy_id == strategy_id, Trade.pnl > 0
+            )
+        )
+        win_count = win_result.scalar() or 0
+
+        loss_result = await session.execute(
+            select(func.count(Trade.id)).where(
+                Trade.strategy_id == strategy_id, Trade.pnl < 0
+            )
+        )
+        loss_count = loss_result.scalar() or 0
+
+        return {
+            "total_trades": total_trades,
+            "total_fees": total_fees,
+            "total_volume": total_volume,
+            "total_pnl": total_pnl,
+            "win_count": win_count,
+            "loss_count": loss_count,
+        }
+
+
 class NotificationCRUD:
     """CRUD operations for notification channels."""
 

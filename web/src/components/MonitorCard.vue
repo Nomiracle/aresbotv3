@@ -376,6 +376,25 @@ const sellOrderDisplay = computed(() =>
   buildOrderDisplay(sortedSellOrders.value, props.status?.current_price)
 )
 
+const pnlStats = computed(() => {
+  const pnl = props.status?.extra_status?.pnl as Record<string, number> | undefined
+  if (!pnl || !pnl.total_trades) return null
+  const totalPnl = pnl.total_pnl ?? 0
+  const totalFees = pnl.total_fees ?? 0
+  const netPnl = totalPnl - totalFees
+  const winCount = pnl.win_count ?? 0
+  const lossCount = pnl.loss_count ?? 0
+  const pnlTradeCount = winCount + lossCount
+  const winRate = pnlTradeCount > 0 ? winCount / pnlTradeCount : 0
+  return { totalPnl, netPnl, totalFees, winCount, lossCount, winRate,
+           totalTrades: pnl.total_trades, totalVolume: pnl.total_volume ?? 0 }
+})
+
+function formatPnlValue(value: number): string {
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(4)}`
+}
+
 onMounted(() => {
   tickClock()
   runTimeTimer = window.setInterval(tickClock, 1000)
@@ -500,6 +519,23 @@ onUnmounted(() => {
         <span class="label">挂单总值:</span>
         <span class="value">{{ formatOrderValue(totalOrderValue) }}</span>
       </div>
+    </div>
+
+    <!-- 盈亏统计行 -->
+    <div v-if="pnlStats" class="pnl-row">
+      <span :class="pnlStats.totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative'">
+        盈亏: {{ formatPnlValue(pnlStats.totalPnl) }}
+      </span>
+      <span class="separator">|</span>
+      <span :class="pnlStats.netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'">
+        净: {{ formatPnlValue(pnlStats.netPnl) }}
+      </span>
+      <span class="separator">|</span>
+      <span>胜率: {{ (pnlStats.winRate * 100).toFixed(1) }}%({{ pnlStats.winCount }}/{{ pnlStats.lossCount }})</span>
+      <span class="separator">|</span>
+      <span>费: {{ pnlStats.totalFees.toFixed(4) }}</span>
+      <span class="separator">|</span>
+      <span>{{ pnlStats.totalTrades }}笔</span>
     </div>
 
     <!-- 挂单详情 -->
@@ -772,6 +808,17 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
 }
+
+.pnl-row {
+  margin-top: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: #606266;
+  border-top: 1px dashed #ebeef5;
+}
+
+.pnl-positive { color: #67c23a; font-weight: 500; }
+.pnl-negative { color: #f56c6c; font-weight: 500; }
 
 .orders-section {
   margin-top: 10px;

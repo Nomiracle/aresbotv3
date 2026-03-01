@@ -12,7 +12,7 @@ from api.deps import get_current_user, get_db_session
 from api.celery_client import get_active_workers, send_run_strategy, revoke_task
 from shared.core.redis_client import get_redis_client
 from shared.exchanges import FUTURES_EXCHANGE_IDS
-from api.db.crud import StrategyCRUD, AccountCRUD
+from api.db.crud import StrategyCRUD, AccountCRUD, TradeCRUD
 from api.db.models import Strategy, StrategyRecordStatus
 
 router = APIRouter()
@@ -603,6 +603,13 @@ async def start_strategy(
     worker_name = (request.worker_name if request and request.worker_name else None) or strategy.worker_name
     worker_name = await asyncio.to_thread(_validate_worker, worker_name)
 
+    # 查询盈亏摘要，随 strategy_runtime 传递给 worker
+    pnl_snapshot = None
+    try:
+        pnl_snapshot = await TradeCRUD.get_pnl_summary(session, strategy_id)
+    except Exception as e:
+        logger.debug("查询盈亏摘要失败 strategy=%s: %s", strategy_id, e)
+
     strategy_runtime = {
         "user_email": user_email,
         "strategy_snapshot": {
@@ -625,6 +632,7 @@ async def start_strategy(
             "exchange": account.exchange,
         },
         "runtime_config": strategy_config,
+        "pnl_snapshot": pnl_snapshot,
     }
 
     task_id = await asyncio.to_thread(
@@ -843,6 +851,11 @@ async def batch_start_strategies(
                 "min_buy_price": str(strategy.min_buy_price) if strategy.min_buy_price else None,
             }
             resolved_worker_name = _validate_worker_from_cache(strategy.worker_name, workers)
+            pnl_snapshot = None
+            try:
+                pnl_snapshot = await TradeCRUD.get_pnl_summary(session, sid)
+            except Exception as e:
+                logger.debug("查询盈亏摘要失败 strategy=%s: %s", sid, e)
             strategy_runtime = {
                 "user_email": user_email,
                 "strategy_snapshot": {
@@ -865,6 +878,7 @@ async def batch_start_strategies(
                     "exchange": account.exchange,
                 },
                 "runtime_config": strategy_config,
+                "pnl_snapshot": pnl_snapshot,
             }
             await asyncio.to_thread(
                 send_run_strategy,

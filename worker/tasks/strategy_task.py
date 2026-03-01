@@ -414,6 +414,7 @@ def run_strategy(
             strategy_config=effective_strategy_config,
             redis_client=redis_client,
             user_email=user_email,
+            pnl_snapshot=runtime_data.get("pnl_snapshot"),
         )
         stop_watcher = StrategyStopWatcher(
             redis_client=redis_client,
@@ -556,6 +557,7 @@ def _create_engine(
     strategy_config: Dict[str, Any],
     redis_client,
     user_email: str = "",
+    pnl_snapshot: Optional[Dict[str, Any]] = None,
 ) -> TradingEngine:
     """Create a trading engine instance."""
     # Decrypt API credentials
@@ -712,5 +714,12 @@ def _create_engine(
                 logger.debug("通知发送失败 strategy=%s: %s", strategy_id, e)
 
         engine.on_notify = on_notify
+
+    # 初始化盈亏统计（从 API 层传入的快照）
+    if pnl_snapshot:
+        try:
+            engine.init_pnl_stats(pnl_snapshot)
+        except Exception as e:
+            logger.debug("初始化盈亏统计失败 strategy=%s: %s", strategy_id, e)
 
     return engine

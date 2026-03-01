@@ -65,6 +65,16 @@ class TradingEngine:
         self.on_status_update: Optional[callable] = None
         self.on_notify: Optional[callable] = None
 
+        # 盈亏统计计数器（启动时从 DB 初始化，每笔成交增量更新）
+        self._pnl_stats: dict[str, float | int] = {
+            "total_trades": 0,
+            "total_pnl": 0.0,
+            "total_fees": 0.0,
+            "total_volume": 0.0,
+            "win_count": 0,
+            "loss_count": 0,
+        }
+
     @property
     def _rules(self) -> TradingRules:
         rules = self._trading_rules
@@ -80,6 +90,10 @@ class TradingEngine:
             rate = self.exchange.get_fee_rate()
             self._fee_rate = rate
         return rate
+
+    def init_pnl_stats(self, summary: dict) -> None:
+        """用历史数据初始化盈亏计数器"""
+        self._pnl_stats.update(summary)
 
     def start(self) -> None:
         """启动交易引擎"""
@@ -711,6 +725,17 @@ class TradingEngine:
         )
         self.state_store.save_trade(trade)
 
+        # 增量更新盈亏计数器
+        self._pnl_stats["total_trades"] += 1
+        self._pnl_stats["total_fees"] += trade.fee
+        self._pnl_stats["total_volume"] += trade.price * trade.quantity
+        if trade.pnl is not None:
+            self._pnl_stats["total_pnl"] += trade.pnl
+            if trade.pnl > 0:
+                self._pnl_stats["win_count"] += 1
+            elif trade.pnl < 0:
+                self._pnl_stats["loss_count"] += 1
+
     @staticmethod
     def _build_raw_order_info(exchange_order: ExchangeOrder) -> dict[str, Any]:
         extra = exchange_order.extra if isinstance(exchange_order.extra, dict) else {}
@@ -1050,6 +1075,7 @@ class TradingEngine:
             **(strategy_extra or {}),
             **(exchange_extra or {}),
         }
+        extra_status["pnl"] = dict(self._pnl_stats)
 
         status = {
             "exchange": exchange_id,
