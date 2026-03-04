@@ -75,6 +75,31 @@ class PolymarketGridStrategy(GridStrategy):
                 return -1  # 取消信号
         return new_price
 
+    def infer_grid_index_from_price(
+        self, order_price: float, current_price: float, is_buy: bool
+    ) -> int:
+        """根据订单价格反推 grid_index（Polymarket：加法偏移）"""
+        if not is_buy or current_price <= 0 or order_price <= 0:
+            return 1
+
+        offset_percent = self.config.offset_percent
+        if offset_percent <= 0:
+            return 1
+
+        # Polymarket: order_price ≈ current_price - grid_index * offset / 100
+        # 即：grid_index ≈ (current_price - order_price) / (offset / 100)
+        price_diff = current_price - order_price
+        inferred_index = round(price_diff / (offset_percent / 100.0))
+
+        # 限制在合理范围内
+        max_grid = self.config.order_grid
+        if inferred_index < 1:
+            return 1
+        if inferred_index > max_grid:
+            return max_grid
+
+        return inferred_index
+
     def _calculate_reprice_target_price(
         self,
         current_price: float,

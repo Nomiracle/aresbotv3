@@ -206,7 +206,8 @@ class BaseExchange(ABC):
         """价格对齐"""
         if rules is None:
             rules = self.get_trading_rules()
-        aligned = math.floor(price / rules.tick_size) * rules.tick_size
+        # 使用 round 替代 floor，避免浮点精度导致的向下偏移
+        aligned = round(price / rules.tick_size) * rules.tick_size
         return round(aligned, rules.price_decimals)
 
     def align_quantity(self, qty: float, rules: Optional[TradingRules] = None) -> float:

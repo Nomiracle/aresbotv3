@@ -289,12 +289,22 @@ class TradingEngine:
         recovered_buys: Dict[str, Order] = {}
         recovered_sells: Dict[str, Order] = {}
         for exchange_order in open_orders:
+            # 根据价格推断 grid_index（买单）
+            grid_index = 1  # 默认
+            if exchange_order.side == "buy" and self._current_price and self._current_price > 0:
+                grid_index = self.strategy.infer_grid_index_from_price(
+                    order_price=exchange_order.price,
+                    current_price=self._current_price,
+                    is_buy=True,
+                )
+
             order = Order(
                 order_id=exchange_order.order_id,
                 symbol=exchange_order.symbol,
                 side=exchange_order.side,
                 price=exchange_order.price,
                 quantity=exchange_order.quantity,
+                grid_index=grid_index,
                 state=OrderState.PLACED,
                 filled_quantity=exchange_order.filled_quantity,
                 filled_price=exchange_order.price,
@@ -478,13 +488,23 @@ class TradingEngine:
                 continue
 
             side = ex_order.side.lower()
+
+            # 根据价格推断 grid_index（买单）
+            grid_index = 1  # 默认
+            if side == "buy" and self._current_price and self._current_price > 0:
+                grid_index = self.strategy.infer_grid_index_from_price(
+                    order_price=ex_order.price,
+                    current_price=self._current_price,
+                    is_buy=True,
+                )
+
             order = Order(
                 order_id=order_id,
                 symbol=ex_order.symbol or self.strategy.config.symbol,
                 side=side,
                 price=ex_order.price,
                 quantity=ex_order.quantity,
-                grid_index=0,
+                grid_index=grid_index,
                 state=OrderState.PLACED,
             )
 
@@ -496,8 +516,8 @@ class TradingEngine:
 
             adopted += 1
             self.log.warning(
-                "认领未跟踪订单: %s side=%s price=%s qty=%s",
-                order_id, side, ex_order.price, ex_order.quantity,
+                "认领未跟踪订单: %s side=%s price=%s qty=%s grid=%s",
+                order_id, side, ex_order.price, ex_order.quantity, grid_index,
             )
 
         if adopted:

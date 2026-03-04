@@ -97,3 +97,12 @@ class BaseStrategy(ABC):
     ) -> Optional[float]:
         """判断是否需要改价，返回新价格或None"""
         pass
+
+    def infer_grid_index_from_price(
+        self, order_price: float, current_price: float, is_buy: bool
+    ) -> int:
+        """根据订单价格反推 grid_index（用于恢复/认领订单）
+
+        子类应根据自己的价格计算公式覆写此方法。
+        """
+        return 1  # 默认返回 1

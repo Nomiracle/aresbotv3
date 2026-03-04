@@ -160,6 +160,16 @@ class GridStrategy(BaseStrategy):
         grid_index: int = 1,
     ) -> Optional[float]:
         """判断是否需要改价"""
+        # 防御：grid_index <= 0 的订单直接取消
+        if grid_index <= 0:
+            self.logger.warning(
+                "cancel %s order with invalid grid_index=%s price=%s",
+                "buy" if is_buy else "sell",
+                grid_index,
+                order_price,
+            )
+            return -1  # 取消信号
+
         target_price = self._calculate_reprice_target_price(
             current_price=current_price,
             is_buy=is_buy,
@@ -167,6 +177,18 @@ class GridStrategy(BaseStrategy):
         )
         if target_price is None or target_price <= 0:
             return None
+
+        # 防御：买单不允许改价到 >= 现价（防止追涨高价成交）
+        # 加 tick_size 容差避免浮点精度误判
+        tick_size = 0.01  # 通用 tick_size，子类可覆写
+        if is_buy and target_price >= current_price - tick_size * 0.5:
+            self.logger.warning(
+                "cancel buy order: target_price=%.4f >= current_price=%.4f - tolerance (grid_index=%s)",
+                target_price,
+                current_price,
+                grid_index,
+            )
+            return -1  # 取消信号
 
         diff_pct = abs(order_price - target_price) / target_price * 100
 
@@ -191,6 +213,31 @@ class GridStrategy(BaseStrategy):
         )
 
         return None
+
+    def infer_grid_index_from_price(
+        self, order_price: float, current_price: float, is_buy: bool
+    ) -> int:
+        """根据订单价格反推 grid_index（普通网格：乘法偏移）"""
+        if not is_buy or current_price <= 0 or order_price <= 0:
+            return 1
+
+        offset_percent = self.config.offset_percent
+        if offset_percent <= 0:
+            return 1
+
+        # 普通网格: order_price ≈ current_price * (1 - grid_index * offset / 100)
+        # 即：grid_index ≈ (current_price - order_price) / current_price * 100 / offset
+        price_diff_pct = (current_price - order_price) / current_price * 100
+        inferred_index = round(price_diff_pct / offset_percent)
+
+        # 限制在合理范围内
+        max_grid = self.config.order_grid
+        if inferred_index < 1:
+            return 1
+        if inferred_index > max_grid:
+            return max_grid
+
+        return inferred_index
 
     def _calculate_buy_price(self, current_price: float, grid_index: int) -> float:
         offset = grid_index * self.config.offset_percent / 100.0
