@@ -768,19 +768,11 @@ class PolymarketUpDown15m(BaseExchange):
             )
             return adjusted_price
 
+        # 卖单不做穿透检查：post_only 已关闭，穿透盘口会以更优价格成交
         if side == "SELL" and best_bid > 0 and adjusted_price <= best_bid:
-            adjusted_price = self.align_price(
-                self._clamp_price(best_bid + tick_size),
-                self._trading_rules,
-            )
-            if adjusted_price <= best_bid:
-                raise ValueError(
-                    f"sell price would cross best bid: requested={requested_price} best_bid={best_bid}"
-                )
             logger.info(
-                "%s maker guard adjusted sell price %.4f -> %.4f (best_bid=%.4f)",
+                "%s sell price %.4f crosses best_bid %.4f, will fill as taker",
                 self.log_prefix,
-                requested_price,
                 adjusted_price,
                 best_bid,
             )
