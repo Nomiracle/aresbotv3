@@ -77,7 +77,11 @@ class PolymarketTradingEngine(TradingEngine):
         # 启动延迟检查任务
         if old_token_id:
             market_close_buffer = getattr(self.exchange, "_market_close_buffer", 60)
-            delay_seconds = max(30, market_close_buffer + 10)
+            # 延迟时间计算：
+            # 1. 至少30秒，确保订单取消有足够时间
+            # 2. 使用 buffer 的 50% + 10 秒，避免对短周期市场延迟过长
+            # 3. 最多60秒，避免延迟过长
+            delay_seconds = max(30, min(60, int(market_close_buffer * 0.5) + 10))
             self._schedule_delayed_market_check(old_token_id, old_market_slug, delay_seconds)
 
     def _schedule_delayed_market_check(self, old_token_id: str, old_market_slug: Optional[str], delay_seconds: int) -> None:
