@@ -123,6 +123,13 @@ class PolymarketUpDown15m(BaseExchange):
 
     # ── BaseExchange 接口实现 ──────────────────────────────────────
 
+    @property
+    def log_prefix(self) -> str:
+        """获取日志前缀，使用 market_slug 而不是 exchange_id."""
+        from worker.core.log_utils import make_log_prefix
+        slug = self._market_slug or self.get_exchange_info().get("id", "unknown")
+        return make_log_prefix(self.symbol, self.api_key, slug)
+
     @classmethod
     def get_exchange_info(cls) -> Dict[str, str]:
         return {

@@ -22,6 +22,7 @@ class PolymarketTradingEngine(TradingEngine):
     def _reset_trading_state(self, liquidation_result: Optional[Dict[str, Any]] = None) -> None:
         """清空所有挂单跟踪和持仓记录，清算持仓入库."""
         old_token_id = getattr(self.exchange, "_token_id", None)
+        old_market_slug = getattr(self.exchange, "_market_slug", None)
 
         with self._lock:
             order_ids = [*self._pending_buys.keys(), *self._pending_sells.keys()]
@@ -77,9 +78,9 @@ class PolymarketTradingEngine(TradingEngine):
         if old_token_id:
             market_close_buffer = getattr(self.exchange, "_market_close_buffer", 60)
             delay_seconds = max(30, market_close_buffer + 10)
-            self._schedule_delayed_market_check(old_token_id, delay_seconds)
+            self._schedule_delayed_market_check(old_token_id, old_market_slug, delay_seconds)
 
-    def _schedule_delayed_market_check(self, old_token_id: str, delay_seconds: int) -> None:
+    def _schedule_delayed_market_check(self, old_token_id: str, old_market_slug: Optional[str], delay_seconds: int) -> None:
         """启动延迟检查任务."""
         if self._delayed_check_timer is not None:
             try:
@@ -89,21 +90,23 @@ class PolymarketTradingEngine(TradingEngine):
 
         def delayed_check():
             try:
-                self._check_old_market_state(old_token_id)
+                self._check_old_market_state(old_token_id, old_market_slug)
             except Exception as e:
                 self.log.error("延迟检查旧市场状态失败: %s", e, exc_info=True)
 
         self._delayed_check_timer = threading.Timer(delay_seconds, delayed_check)
         self._delayed_check_timer.daemon = True
         self._delayed_check_timer.start()
+        slug_display = old_market_slug or old_token_id[:16]
         self.log.info(
-            "市场切换: 已启动延迟检查任务，将在%d秒后检查旧市场 token_id=%s",
-            delay_seconds, old_token_id[:16],
+            "市场切换: 已启动延迟检查任务，将在%d秒后检查旧市场 slug=%s",
+            delay_seconds, slug_display,
         )
 
-    def _check_old_market_state(self, old_token_id: str) -> None:
+    def _check_old_market_state(self, old_token_id: str, old_market_slug: Optional[str]) -> None:
         """检查旧市场的订单和持仓状态."""
-        self.log.info("延迟检查: 开始检查旧市场状态 token_id=%s", old_token_id[:16])
+        slug_display = old_market_slug or old_token_id[:16]
+        self.log.info("延迟检查: 开始检查旧市场状态 slug=%s", slug_display)
 
         # 查询旧市场的所有订单
         old_market_orders = self.exchange.get_open_orders(token_id=old_token_id)
@@ -148,7 +151,7 @@ class PolymarketTradingEngine(TradingEngine):
             self._handle_filled_buy_orders(filled_buy_orders, old_token_id)
 
         # 检查并清算持仓
-        self._check_and_liquidate_old_token_balance(old_token_id)
+        self._check_and_liquidate_old_token_balance(old_token_id, slug_display)
 
         self.log.info("延迟检查: 完成旧市场状态检查")
 
@@ -189,18 +192,18 @@ class PolymarketTradingEngine(TradingEngine):
             except Exception as e:
                 self.log.error("延迟检查: 保存买单交易失败 order_id=%s error=%s", ex_order.order_id, e)
 
-    def _check_and_liquidate_old_token_balance(self, old_token_id: str) -> None:
+    def _check_and_liquidate_old_token_balance(self, old_token_id: str, slug_display: str) -> None:
         """检查并清算旧市场的 token 余额."""
         try:
             # 查询旧 token 的余额
             balance = self._get_token_balance(old_token_id)
             if balance < 1.0:
-                self.log.debug("延迟检查: 旧市场无持仓 token_id=%s balance=%s", old_token_id[:16], balance)
+                self.log.debug("延迟检查: 旧市场无持仓 slug=%s balance=%s", slug_display, balance)
                 return
 
             self.log.warning(
-                "延迟检查: 发现旧市场持仓 token_id=%s balance=%s，尝试平仓",
-                old_token_id[:16], balance,
+                "延迟检查: 发现旧市场持仓 slug=%s balance=%s，尝试平仓",
+                slug_display, balance,
             )
 
             # 尝试以市价单平仓
@@ -221,8 +224,8 @@ class PolymarketTradingEngine(TradingEngine):
             # 查询成交价
             fill_price = self.exchange._query_fill_price(raw_response)
             self.log.warning(
-                "延迟检查: 旧市场持仓已平仓 token_id=%s qty=%s fill_price=%s",
-                old_token_id[:16], balance, fill_price,
+                "延迟检查: 旧市场持仓已平仓 slug=%s qty=%s fill_price=%s",
+                slug_display, balance, fill_price,
             )
 
             # 记录到数据库（作为卖出交易，但无法关联到具体买单）
@@ -247,7 +250,7 @@ class PolymarketTradingEngine(TradingEngine):
                     },
                 )
         except Exception as e:
-            self.log.error("延迟检查: 清算旧市场持仓失败 token_id=%s error=%s", old_token_id[:16], e)
+            self.log.error("延迟检查: 清算旧市场持仓失败 slug=%s error=%s", slug_display, e)
 
     def _get_token_balance(self, token_id: str) -> float:
         """查询指定 token 的余额（复用 exchange 的方法）."""
