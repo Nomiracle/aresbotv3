@@ -357,25 +357,35 @@ class PolymarketUpDown15m(BaseExchange):
         with self._orders_lock:
             return self._orders_cache.get(order_id)
 
-    def get_open_orders(self) -> List[ExchangeOrder]:
-        self._ensure_market_valid()
-        if not self._token_id:
+    def get_open_orders(self, token_id: Optional[str] = None) -> List[ExchangeOrder]:
+        """获取挂单列表.
+
+        Args:
+            token_id: 可选的 token_id，默认使用当前市场的 token_id
+        """
+        target_token_id = token_id or self._token_id
+        if not target_token_id:
             return []
 
-        # 缓存优先
-        if self._stream is not None:
-            orders = self._stream.get_open_orders(self._token_id)
-            if orders:
-                return orders
+        # 如果查询的不是当前市场，跳过缓存和市场验证
+        if token_id is None:
+            self._ensure_market_valid()
+            # 缓存优先
+            if self._stream is not None:
+                orders = self._stream.get_open_orders(target_token_id)
+                if orders:
+                    return orders
 
         # REST 兜底
         try:
             raw_orders = self._client.get_orders(
-                params=OpenOrderParams(asset_id=self._token_id),
+                params=OpenOrderParams(asset_id=target_token_id),
             )
         except Exception:
-            with self._orders_lock:
-                return [o for o in self._orders_cache.values() if o.status in {OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED}]
+            if token_id is None:
+                with self._orders_lock:
+                    return [o for o in self._orders_cache.values() if o.status in {OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED}]
+            return []
 
         if not isinstance(raw_orders, list):
             raw_orders = []
@@ -387,14 +397,15 @@ class PolymarketUpDown15m(BaseExchange):
             order = self._normalize_order(raw)
             if order is None:
                 continue
-            # 只保留当前 token_id 的订单
-            token_id = (order.extra or {}).get("token_id", "")
-            if self._token_id and token_id and token_id != self._token_id:
+            # 过滤 token_id
+            order_token_id = (order.extra or {}).get("token_id", "")
+            if target_token_id and order_token_id and order_token_id != target_token_id:
                 continue
             if order.status in {OrderStatus.PLACED, OrderStatus.PARTIALLY_FILLED}:
                 result.append(order)
-                with self._orders_lock:
-                    self._orders_cache[order.order_id] = order
+                if token_id is None:
+                    with self._orders_lock:
+                        self._orders_cache[order.order_id] = order
 
         return result
 
