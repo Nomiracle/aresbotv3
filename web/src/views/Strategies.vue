@@ -360,7 +360,7 @@ async function handleBatchStart() {
       const rest = result.failed_details.length > 3 ? `；其余 ${result.failed_details.length - 3} 条请查看接口响应` : ''
       ElMessage.warning(`启动失败原因: ${preview}${rest}`)
     }
-    fetchStrategies()
+    await fetchStrategies()
   } catch {}
 }
 
@@ -370,7 +370,7 @@ async function handleBatchStop() {
   try {
     const result = await strategyApi.batchStop(selectedIds.value)
     ElMessage.success(`停止成功: ${result.success.length}, 失败: ${result.failed.length}`)
-    fetchStrategies()
+    await fetchStrategies()
   } catch {}
 }
 
