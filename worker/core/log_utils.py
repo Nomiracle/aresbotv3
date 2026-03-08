@@ -1,6 +1,7 @@
 """统一日志前缀工具"""
 
 import logging
+from typing import Callable
 
 
 def make_log_prefix(symbol: str, api_key: str, exchange_id: str) -> str:
@@ -16,7 +17,18 @@ def make_log_prefix(symbol: str, api_key: str, exchange_id: str) -> str:
 
 
 class PrefixAdapter(logging.LoggerAdapter):
-    """通用前缀日志适配器"""
+    """通用前缀日志适配器，支持动态前缀"""
+
+    def __init__(self, logger, extra):
+        super().__init__(logger, extra)
+        # 如果 prefix 是可调用对象，则每次都动态获取
+        self._prefix_callable = None
+        if callable(extra.get('prefix')):
+            self._prefix_callable = extra['prefix']
 
     def process(self, msg, kwargs):
-        return f"{self.extra['prefix']} {msg}", kwargs
+        if self._prefix_callable:
+            prefix = self._prefix_callable()
+        else:
+            prefix = self.extra['prefix']
+        return f"{prefix} {msg}", kwargs

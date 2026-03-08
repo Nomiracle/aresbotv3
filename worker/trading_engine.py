@@ -35,11 +35,15 @@ class TradingEngine:
             position_tracker=self.position_tracker,
         )
 
-        base_prefix = exchange.log_prefix
-        if strategy_id is not None:
-            base_prefix = f"{base_prefix} [S#{strategy_id}]"
+        # 使用 lambda 创建动态前缀，支持市场切换后自动更新
+        def get_prefix():
+            base_prefix = exchange.log_prefix
+            if strategy_id is not None:
+                return f"{base_prefix} [S#{strategy_id}]"
+            return base_prefix
+
         logger_name = f"{type(self).__module__}.{type(self).__name__}"
-        self.log = PrefixAdapter(logging.getLogger(logger_name), {"prefix": base_prefix})
+        self.log = PrefixAdapter(logging.getLogger(logger_name), {"prefix": get_prefix})
 
         self._pending_buys: Dict[str, Order] = {}
         self._pending_sells: Dict[str, Order] = {}
